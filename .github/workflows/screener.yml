@@ -1,0 +1,36 @@
+name: Daily Options Screener
+
+# Runs the (yfinance-only) screener in the cloud and pushes the report to Telegram.
+# No PC required. The monitor + stop orders stay on your PC (they need IB Gateway).
+#
+# Setup:
+#   1. Push this repo to GitHub.
+#   2. Repo Settings -> Secrets and variables -> Actions -> add:
+#        TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+#   3. (Optional, for IBKR-grade IV Rank in the cloud) commit data/iv_history.csv
+#      from your PC's weekly update_iv_history.py run.
+
+on:
+  schedule:
+    # cron is UTC. 13:00 UTC ≈ 08:00 ET (EST) / 09:00 ET (EDT). Adjust to taste.
+    - cron: '0 13 * * 1-5'
+  workflow_dispatch: {}        # lets you run it manually from the Actions tab
+
+jobs:
+  screen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install deps
+        run: pip install -r requirements.txt
+      - name: Run screener
+        run: python screener.py
+      - name: Send report
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python daily_report.py

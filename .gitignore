@@ -1,0 +1,18 @@
+# Secrets & personal data — never commit
+telegram_config.json
+data/account.json
+
+# Environment / caches
+venv/
+__pycache__/
+*.pyc
+
+# Transient run outputs (regenerated each run)
+screener_output.csv
+monitor_output.csv
+roll_suggestions.csv
+logs/
+
+# NOTE: data/iv_history.csv is intentionally NOT ignored —
+# commit it (from your weekly PC update_iv_history.py run) so the
+# cloud screener gets IBKR-grade IV Rank instead of lite mode.
