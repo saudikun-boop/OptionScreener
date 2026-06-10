@@ -1,0 +1,19 @@
+{
+  "_comment": "Central tunables for the options system. Edit values here (not the code). Committed to the repo so the cloud screener (GitHub Actions) and your PC stay in sync. After editing, commit + push: git add config.json && git commit -m tune && git push.",
+
+  "weights":  { "option": 0.40, "technical": 0.40, "diversify": 0.20 },
+
+  "gates":    { "min_dte": 15, "max_dte": 60, "delta_min": 0.15, "delta_max": 0.30,
+                "max_spread_pct": 0.10, "min_open_interest": 100,
+                "min_roe": 0.08, "min_rev_growth": 0.0, "max_forward_pe": 60 },
+
+  "regime":   { "mode": "downtrend", "downtrend_slope": -0.02, "new_low_tol": 0.02 },
+
+  "oversold": { "z_threshold": -2.5, "bonus": 8.0 },
+
+  "sizing":   { "account_size_fallback": 700000, "max_risk_pct": 0.03, "assumed_drawdown": 0.15 },
+
+  "monitor":  { "profit_target_pct": 0.70, "hard_close_dte": 21, "near_atm_buffer": 0.03, "roll_top_n": 3 },
+
+  "stops":    { "basis": "underlying", "drop": 0.07, "credit_mult": 2.5 }
+}
