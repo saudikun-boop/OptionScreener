@@ -145,6 +145,8 @@ OVERSOLD_BONUS = _c('oversold', 'bonus', 8.0)           # points added to techni
 ACCOUNT_SIZE = _c('sizing', 'account_size_fallback', ACCOUNT_SIZE)
 MAX_RISK_PCT = _c('sizing', 'max_risk_pct', MAX_RISK_PCT)
 ASSUMED_DRAWDOWN = _c('sizing', 'assumed_drawdown', ASSUMED_DRAWDOWN)
+REPORT_TOP_TICKERS = _c('report', 'top_tickers', 5)
+REPORT_PER_TICKER  = _c('report', 'per_ticker', 3)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -596,7 +598,12 @@ def screen_ticker(ticker, iv_hist_df, holdings_returns, verbose=True):
         exps_used += 1
 
         T    = dte / 365.0
-        puts = yf_t.option_chain(exp_str).puts
+        try:
+            puts = yf_t.option_chain(exp_str).puts
+        except Exception:
+            continue
+        if puts is None or len(puts) == 0:
+            continue
 
         for _, row in puts.iterrows():
             strike = float(row['strike'])
@@ -845,10 +852,18 @@ def main():
                     'score_option', 'score_technical', 'score_diversify', 'score']
     display_cols = [c for c in display_cols if c in df.columns]
 
+    # Top tickers by best score (variety), top contracts each, sorted by ticker then score
+    order = (df.groupby('ticker')['score'].max()
+               .sort_values(ascending=False).head(REPORT_TOP_TICKERS).index.tolist())
+    top = (df[df['ticker'].isin(order)]
+             .sort_values('score', ascending=False)
+             .groupby('ticker', as_index=False).head(REPORT_PER_TICKER)
+             .sort_values(['ticker', 'score'], ascending=[True, False]))
     print("\n" + "=" * 74)
-    print(f"RANKED CANDIDATES  ({len(df)} total, sorted by composite score)")
+    print(f"TOP CANDIDATES  ({len(order)} tickers x {REPORT_PER_TICKER}, of {len(df)} total; "
+          f"by ticker, then score)")
     print("=" * 74)
-    print(df[display_cols].head(25).to_string(index=False))
+    print(top[display_cols].to_string(index=False))
 
     # Best candidate(s) per sleeve — for building a diversified book across asset classes
     if 'sleeve' in df.columns:
