@@ -112,6 +112,39 @@ IV_HISTORY_PATH = os.path.join(_SCRIPT_DIR, 'data', 'iv_history.csv')
 ACCOUNT_FILE = os.path.join(_SCRIPT_DIR, 'data', 'account.json')   # written by monitor.py
 IV_RANK_LOOKBACK = 252
 IV_HISTORY_COLS = ['date', 'ticker', 'iv', 'hv', 'source']
+
+# ── Central config (config.json) — overrides the defaults above; repo-synced ──
+import json
+CONFIG_PATH = os.path.join(_SCRIPT_DIR, 'config.json')
+def load_config():
+    try:
+        with open(CONFIG_PATH) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+CFG = load_config()
+def _c(section, key, default):
+    sec = CFG.get(section, {}) if isinstance(CFG, dict) else {}
+    return sec.get(key, default) if isinstance(sec, dict) else default
+
+W_OPTION    = _c('weights', 'option', W_OPTION)
+W_TECHNICAL = _c('weights', 'technical', W_TECHNICAL)
+W_DIVERSIFY = _c('weights', 'diversify', W_DIVERSIFY)
+MIN_DTE = _c('gates', 'min_dte', MIN_DTE);   MAX_DTE = _c('gates', 'max_dte', MAX_DTE)
+DELTA_MIN = _c('gates', 'delta_min', DELTA_MIN);  DELTA_MAX = _c('gates', 'delta_max', DELTA_MAX)
+MAX_SPREAD_PCT = _c('gates', 'max_spread_pct', MAX_SPREAD_PCT)
+MIN_OPEN_INTEREST = _c('gates', 'min_open_interest', MIN_OPEN_INTEREST)
+MIN_ROE = _c('gates', 'min_roe', MIN_ROE)
+MIN_REV_GROWTH = _c('gates', 'min_rev_growth', MIN_REV_GROWTH)
+MAX_FORWARD_PE = _c('gates', 'max_forward_pe', MAX_FORWARD_PE)
+REGIME_MODE = _c('regime', 'mode', REGIME_MODE)
+DOWNTREND_SLOPE = _c('regime', 'downtrend_slope', DOWNTREND_SLOPE)
+NEW_LOW_TOL = _c('regime', 'new_low_tol', 0.02)         # within this % of the 6-mo low = "still at new lows"
+OVERSOLD_Z = _c('oversold', 'z_threshold', -2.5)        # price this many sigma below 20-day mean = deeply oversold
+OVERSOLD_BONUS = _c('oversold', 'bonus', 8.0)           # points added to technical score when oversold
+ACCOUNT_SIZE = _c('sizing', 'account_size_fallback', ACCOUNT_SIZE)
+MAX_RISK_PCT = _c('sizing', 'max_risk_pct', MAX_RISK_PCT)
+ASSUMED_DRAWDOWN = _c('sizing', 'assumed_drawdown', ASSUMED_DRAWDOWN)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -213,15 +246,18 @@ def compute_hv(hist, window=30):
 
 
 def compute_technicals(hist):
-    """50/200-MA (+200-MA slope), RSI(14), Bollinger %B, 20/50-day swing lows."""
+    """50/200-MA (+slope), RSI(14), Bollinger %B & z-score, 20/50/126-day swing lows."""
     out = {'ma50': None, 'ma200': None, 'ma200_slope': None, 'rsi': None,
-           'bb_pctb': None, 'swing_low_20': None, 'swing_low_50': None}
+           'bb_pctb': None, 'bb_z': None, 'swing_low_20': None,
+           'swing_low_50': None, 'swing_low_126': None}
     try:
         close = hist['Close'].dropna()
         low = hist['Low'].dropna() if 'Low' in hist else close
         if len(close) >= 50:
             out['ma50'] = float(close.rolling(50).mean().iloc[-1])
             out['swing_low_50'] = float(low.rolling(50).min().iloc[-1])
+        if len(close) >= 126:
+            out['swing_low_126'] = float(low.rolling(126).min().iloc[-1])
         if len(close) >= MA_REGIME_WINDOW:
             ma200s = close.rolling(MA_REGIME_WINDOW).mean()
             out['ma200'] = float(ma200s.iloc[-1])
@@ -236,6 +272,7 @@ def compute_technicals(hist):
             if sd and sd > 0:
                 upper, lower = mid + 2 * sd, mid - 2 * sd
                 out['bb_pctb'] = float((close.iloc[-1] - lower) / (upper - lower))
+                out['bb_z'] = float((close.iloc[-1] - mid) / sd)   # sigma vs 20-day mean
         if len(close) >= 15:
             diff = close.diff()
             gain = diff.clip(lower=0).rolling(14).mean().iloc[-1]
@@ -251,20 +288,21 @@ def compute_technicals(hist):
 
 
 def regime_block(price, tech):
-    """Whether to skip a ticker on trend grounds, per REGIME_MODE. -> (bool, reason)."""
+    """Whether to skip a ticker on trend grounds, per REGIME_MODE. -> (bool, reason).
+    'downtrend' now means a TRUE falling knife: the 200-MA is still falling AND price
+    is still making (near) a new ~6-month low. Names that dropped then based above their
+    low pass through to be judged by the score (incl. the oversold bonus)."""
     ma200 = tech.get('ma200')
     if REGIME_MODE in ('score', 'off') or ma200 is None:
         return False, ''
     if REGIME_MODE == 'gate':
         return (price < ma200), f"price ${price:.2f} < 200-MA ${ma200:.2f}"
-    ma50  = tech.get('ma50')
     slope = tech.get('ma200_slope')
-    low50 = tech.get('swing_low_50')
-    below   = price < ma200 and (ma50 is not None and price < ma50)
+    low126 = tech.get('swing_low_126')
     falling = slope is not None and slope < DOWNTREND_SLOPE
-    near_lo = low50 is not None and price <= low50 * (1 + NEAR_LOW_PCT)
-    if below and falling and near_lo:
-        return True, "confirmed downtrend (below 50 & 200-MA, 200-MA falling, near 50-day low)"
+    new_low = low126 is not None and price <= low126 * (1 + NEW_LOW_TOL)
+    if falling and new_low:
+        return True, "falling knife (200-MA falling + still at a new ~6-month low)"
     return False, ''
 
 
@@ -642,6 +680,7 @@ def screen_ticker(ticker, iv_hist_df, holdings_returns, verbose=True):
                 'div_score':   div_score,
                 'fwd_pe':      round(fund['forward_pe'], 1) if fund.get('forward_pe') else None,
                 'roe':         round(fund['roe'], 3) if fund.get('roe') else None,
+                'bb_z':        round(tech['bb_z'], 2) if tech.get('bb_z') is not None else None,
                 '_rsi':        tech.get('rsi'),
                 '_bb_pctb':    tech.get('bb_pctb'),
                 '_support_margin': support_margin,
@@ -721,6 +760,11 @@ def score_candidates(df, iv_hist_df):
         tech_parts.append(_pct_rank(df['_support_margin'], True))
     df['score_technical'] = (pd.concat(tech_parts, axis=1).mean(axis=1)
                              if tech_parts else np.nan)
+    # Mean-reversion bonus: deeply oversold (price <= OVERSOLD_Z sigma below 20-day mean)
+    if 'bb_z' in df.columns:
+        z = pd.to_numeric(df['bb_z'], errors='coerce')
+        bonus = ((z <= OVERSOLD_Z) & df['score_technical'].notna()).astype(float) * OVERSOLD_BONUS
+        df['score_technical'] = (df['score_technical'] + bonus).clip(upper=100)
 
     # ---- Diversification bucket (absolute 0-100; NaN when no holdings) ----
     df['score_diversify'] = (pd.to_numeric(df['div_score'], errors='coerce')
@@ -796,7 +840,7 @@ def main():
     df = df.sort_values('score', ascending=False, na_position='last').reset_index(drop=True)
 
     display_cols = ['ticker', 'type', 'stock_price', 'otm_%', 'expiry', 'dte', 'strike', 'mid',
-                    'lots', 'open_int', 'delta', 'iv_pct', 'iv_hv',
+                    'lots', 'open_int', 'delta', 'iv_pct', 'iv_hv', 'bb_z',
                     'iv_rank', 'iv_src', 'ann_ret_pct', 'div_corr',
                     'score_option', 'score_technical', 'score_diversify', 'score']
     display_cols = [c for c in display_cols if c in df.columns]

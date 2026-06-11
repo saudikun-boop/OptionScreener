@@ -19,13 +19,14 @@ import warnings
 import screener as S          # reuse screener gates + scoring for roll candidates
 warnings.filterwarnings('ignore')
 
-# ── Config ────────────────────────────────────────────────────────────────────
+# ── Config (defaults; overridden by config.json via screener) ─────────────────
 PORT              = 4001   # 4001 live / 4002 paper
 CLIENT_ID         = 3      # different from screener (2) and test (1)
-PROFIT_TARGET_PCT = 0.70   # close at 70% profit
-HARD_CLOSE_DTE    = 21     # close at 21 DTE regardless of profit
-ROLL_TOP_N        = 3      # roll candidates to show per flagged short put
-NEAR_ATM_BUFFER   = 0.03   # short put is "challenged" (ATM/ITM) if stock <= strike*(1+this)
+_m = S.CFG.get('monitor', {}) if isinstance(S.CFG, dict) else {}
+PROFIT_TARGET_PCT = _m.get('profit_target_pct', 0.70)   # close at this profit
+HARD_CLOSE_DTE    = _m.get('hard_close_dte', 21)        # close at this DTE
+ROLL_TOP_N        = _m.get('roll_top_n', 3)             # roll candidates per flagged put
+NEAR_ATM_BUFFER   = _m.get('near_atm_buffer', 0.03)     # short put "challenged" if stock <= strike*(1+this)
 # ─────────────────────────────────────────────────────────────────────────────
 
 

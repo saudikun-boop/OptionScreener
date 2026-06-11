@@ -16,3 +16,8 @@ logs/
 # NOTE: data/iv_history.csv is intentionally NOT ignored —
 # commit it (from your weekly PC update_iv_history.py run) so the
 # cloud screener gets IBKR-grade IV Rank instead of lite mode.
+
+# NOTE: config.json is intentionally NOT ignored — it holds the tunable
+# settings (weights, gates, regime, sizing, stops) and is committed so the
+# cloud (GitHub Actions) and your PC run the SAME settings. Edit it, then:
+#   git add config.json && git commit -m "tune" && git push

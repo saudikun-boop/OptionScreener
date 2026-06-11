@@ -726,11 +726,102 @@ Recommended design: resting **GTC** stops at IBKR (broker-enforced 24/7), idempo
 
 ### Progress
 - [x] Report delivery: Telegram via GitHub Actions (notify.py, daily_report.py, workflow, gitignore)
-- [ ] User: set up bot + GitHub secrets; first cloud run
-- [ ] Weekly PC push of data/iv_history.csv for cloud IBKR IV
-- [ ] Stop-order automation (pending decisions)
+- [x] **LIVE: cloud screener → Telegram confirmed working** (bot OpScreen_bot, repo saudikun-boop/OptionScreener public, secrets set, manual run delivered to phone 2026-06-08)
+- [x] PC helpers: run_daily.bat (monitor→screener→report), run_weekly.bat (IV update); monitor connect made fault-tolerant
+- [ ] User: schedule run_daily.bat / run_weekly.bat via Task Scheduler (schtasks given); IB Gateway auto-restart + weekly 2FA
+- [ ] Weekly PC push of data/iv_history.csv for cloud IBKR IV (cloud currently "lite")
+- [x] Stop-order automation — place_stops.py (Entry 016)
 - [ ] Extend rolls to short calls + combos
 - [ ] Performance pass
 - [ ] Phase 2: Cloud VM (headless Gateway → PC-free monitor/stops)
+
+---
+
+## Entry 016 — 2026-06-08 (continued)
+
+### Stop-order tool — place_stops.py
+Builds GTC buy-to-close stops for single-leg short puts, triggered when the
+**underlying hits strike × (1 − 0.15)** (= strike −15%, `S.ASSUMED_DRAWDOWN`), matching
+the monitor's exposure metric.
+
+- **Modes:** `MODE='advisory'` (DEFAULT) prints proposed stops, submits nothing; `MODE='live'` transmits after a typed **YES** confirmation. Agent never transmits — user flips MODE + confirms.
+- **Idempotent:** skips any short put that already has an open BUY order (stop/roll/close), so re-runs never duplicate. Skips combos (>1 leg per symbol/expiry) and short calls.
+- **Order:** GTC `MarketOrder('BUY', qty)` with a `PriceCondition` on the underlying (`isMore=False`, price=trigger). Market = guaranteed exit (slippage risk; switchable to limit). Connects PORT 4001 (live — that's where positions are).
+- Advisory table shows symbol/expiry/strike/qty/current stock/trigger/% to trigger.
+- Pure helpers `stop_trigger`, `combo_keys`, `plan_stops` unit-tested (9 checks): trigger math (395→335.75, 57.5→48.88), combo flagged, protected-skip, calls/longs/combos excluded, qty abs.
+
+### IBKR login automation (guidance given, not code)
+Standard pattern: IB Gateway with **Auto Restart** (Configure→Lock and Exit), log in once (2FA), stays up days; full re-login (2FA) ~weekly. Optional IBC tool for auto-start. Truly unattended = Phase-2 VM. monitor.py made connect-fault-tolerant so scheduled runs don't crash when Gateway is down.
+
+### Usage
+Advisory: `venv\Scripts\python.exe place_stops.py` (Gateway up). Go live: set MODE='live', rerun, type YES. Re-run adds only missing stops.
+
+### Progress
+- [x] place_stops.py (advisory default → live; GTC underlying-conditional buy-to-close; idempotent)
+- [ ] Optional: fold advisory "puts missing a stop" list into the daily digest
+- [ ] Extend rolls to short calls + combos
+- [ ] Performance pass
+- [ ] Phase 2: Cloud VM (headless Gateway)
+
+---
+
+## Entry 017 — 2026-06-08 (continued)
+
+### Stop basis discussion + final design
+Discussed underlying-trigger vs option-price stop. Key points captured: underlying-conditional stops are immune to wide/noisy option quotes and are time-invariant; option-price stops (native STP) cap $ loss directly but can misfire on thin quotes and (for credit-multiple) trigger on IV spikes / whipsaw — a known drag on short-premium returns. User chose **underlying basis**, then tuned the level **15% → 10% → 7%**.
+
+### place_stops.py — final
+- **Configurable `STOP_BASIS`**: `'underlying'` (default) | `'option_intrinsic'` | `'credit'`.
+  - underlying → conditional buy-to-close when stock ≤ strike×(1−STOP_DROP)
+  - option_intrinsic → native STP at option price = strike×STOP_DROP
+  - credit → native STP at CREDIT_MULT × entry credit (entry credit = avgCost/100)
+- **`STOP_DROP = 0.07`** (−7%), a separate knob from sizing/exposure (`S.ASSUMED_DRAWDOWN = 0.15`): size for a 15% move, cut at 7% (conservative buffer). `CREDIT_MULT = 2.5`.
+- Advisory default, idempotent, combos/calls skipped, live path builds MarketOrder+PriceCondition (underlying) or StopOrder (option), GTC, YES-gated.
+- Pure helpers `stop_spec` / `plan_stops` / `combo_keys` unit-tested across all three bases (underlying 100→93.0, intrinsic→7.0, credit 2.5×2→5.0; MSFT 395→367.35; idempotent skip; entry credit from avgCost/100). Host file verified complete (180 lines).
+
+---
+
+## Entry 018 — 2026-06-08 (continued)
+
+### Technical documentation created
+Wrote **`docs/TECHNICAL_DOC.md`** (2267 lines) — full system reference: overview & architecture (components, data files, data-flow diagram), strategy/theory (wheel, IV vs HV, IV Rank vs IV/HV, gates-vs-score), data sources + the Option-A decision, the screener (universe, every gate, scoring buckets & exact formulas, sleeves, sizing), monitor (P&L/moneyness/exposure/actions/combos + roll suggestions), stops (bases/STOP_DROP/modes), reporting & Telegram, automation (GitHub Actions + Task Scheduler + IBKR login reality), a **Key Decisions** table (13 decision points), a **field glossary** for every output column, a **config reference**, **how-to-use**, a **GitHub** section, limitations/future work, and an **appendix with the full raw source** of all 9 code/config files (embedded via concatenation, fences balanced).
+
+This is the canonical human-facing doc; PROJECT_LOG.md remains the chronological build journal.
+
+---
+
+## Entry 019 — 2026-06-08 (continued)
+
+### Polished Word guide for first-time readers
+Created **`docs/Options_System_Guide.docx`** (11 pages) — a visually designed, plain-English version aimed at someone seeing the system for the first time. Title page, auto table of contents, styled headings (navy/blue), colored tables with alternating rows, and blue "callout" boxes. Decisions are written narratively (e.g., "why volatility history is refreshed separately" instead of "Option A").
+
+Two requested deep-dives are the centerpiece:
+- **§6 How the score is calculated** — a fully worked 4-candidate example (NVDA/QQQ/META/GLD): raw inputs → per-factor percentile ranks → bucket averages → weighted composite (META 72.9 wins; GLD last due to low premium → motivates the per-sleeve view).
+- **§7 Diversification** — the `(1−corr)/2×100` mapping table plus a live example against the actual 9-name book, showing scores cluster ~40s because nothing is negatively correlated now (so the per-sleeve view does the real work).
+
+Built with docx-js, validated (412 paragraphs, all checks passed), rendered to PDF to verify layout. User noted an HTML version may follow once content is refined.
+
+---
+
+## Entry 020 — 2026-06-10
+
+### Central config.json (repo-synced) + regime Option 3 + Bollinger-z oversold flag
+**Why config.json:** user's hand-tuned `W_TECHNICAL=0.40` had been silently reverted by my later full-file rewrites (the code carried 0.25). Fix: pull tunables out of code into **`config.json`**, loaded by `screener.py` (`load_config()` + `_c()` overrides the in-code defaults). `monitor.py` and `place_stops.py` read the same file via `S.CFG`. config.json is **tracked (NOT gitignored)** so GitHub Actions (cloud) and the PC run identical settings — user explicitly wanted this in-sync. Sections: weights, gates, regime, oversold, sizing, monitor, stops. Missing keys fall back to code defaults.
+
+**Regime gate → Option 3 (true falling knives only).** User felt "below 50 & 200-MA" was too broad — many fine basing/support setups live there. New `'downtrend'` rule: skip **only** when 200-MA is falling AND price is still within `NEW_LOW_TOL` (2%) of a **new ~6-month low** (`swing_low_126`). Names that dropped then based above their low now pass and are judged by the score. (Dropped the below-50&200 + near-50d-low combo.)
+
+**Bollinger-z oversold = flag, not gate.** Discussed: a 3σ-below move is usually capitulation (rich premium + bounce) — an *opportunity* for a put seller, so excluding it would be backwards. Implemented `bb_z` (sigma below 20-day mean) as a column + a **mean-reversion bonus**: `bb_z ≤ OVERSOLD_Z` (−2.5) adds `OVERSOLD_BONUS` (8) to the technical score (clipped 100). Surfaces capitulation/support entries instead of hiding them.
+
+**Tested (standalone, mount kept truncating the big file on read):** config overrides apply (weights/oversold/new_low_tol), new regime gate (falling+new-low blocked; based-above-low passes; flat-200MA passes; ma200 None passes), oversold bonus (+8/clip 100), bb_z formula. Host screener.py verified complete (874 lines). compute_technicals adds `bb_z` + `swing_low_126`.
+
+Docs updated: TECHNICAL_DOC §5 (regime + oversold) and §12 (config.json). Word guide not yet regenerated (offer pending).
+
+### Progress
+- [x] config.json (weights/gates/regime/oversold/sizing/monitor/stops), repo-tracked, loaded by all 3 scripts
+- [x] Regime Option 3 (falling-knife only) + Bollinger-z oversold bonus + bb_z column
+- [ ] User: re-run screener; commit config.json so cloud picks it up; set weights in config (e.g. technical 0.40)
+- [x] Regenerated Word guide (v1.1 → v1.2): regime=falling-knife, oversold flag, weights 40/40/20, config.json + Git callouts, bb_z glossary
+- [x] Word guide §6 deep-dive (v1.2): added 6.1 "technical factors explained" (RSI tent peak@40 w/ table, Bollinger %B definition + band table, support-cushion formula) and rebuilt 6.2 as a 4-scenario step-by-step example (PYPL capitulation / META sweet-spot / NVDA overbought / GLD low-premium) showing every raw→score conversion incl. the oversold bonus. 12 pages, validated.
+- [ ] Extend rolls/stops to calls + combos; performance pass; Phase 2 VM
 
 ---
