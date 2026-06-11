@@ -14,11 +14,13 @@ on:
   schedule:
     # cron is UTC and does NOT shift for daylight saving. Times below are for EDT
     # (summer, UTC-4). In EST (winter, UTC-5) add 1 hour to each UTC time.
-    # "30 min after open" (10:00 ET) — both lines so it's correct year-round:
-    - cron: '0 14 * * 1-5'    # 10:00 ET in summer (EDT, UTC-4)
-    - cron: '0 15 * * 1-5'    # 10:00 ET in winter (EST, UTC-5)
-    # "30 min before close" (15:30 ET) — summer only (add '30 20 * * 1-5' for winter):
-    - cron: '30 19 * * 1-5'   # 15:30 ET in summer (EDT)
+    # NOTE: GitHub cron is best-effort and tends to DROP on-the-hour (:00) jobs under
+    # load, so these use off-hour minutes for better reliability.
+    # ~30 min after open (~10:07 ET) — both lines cover summer & winter:
+    - cron: '7 14 * * 1-5'    # 10:07 ET in summer (EDT, UTC-4)
+    - cron: '7 15 * * 1-5'    # 10:07 ET in winter (EST, UTC-5)
+    # ~30 min before close (~15:33 ET) — summer (add '33 20 * * 1-5' for winter):
+    - cron: '33 19 * * 1-5'   # 15:33 ET in summer (EDT)
   workflow_dispatch: {}        # lets you run it manually from the Actions tab
 
 jobs:
