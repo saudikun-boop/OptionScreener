@@ -498,6 +498,41 @@ Notes:
   on a schedule (see §14) — no commands needed there. You only run the IBKR scripts
   (monitor / place_stops / update_iv_history) locally, since those need Gateway.
 
+### 13.2b Sleeve abbreviations (Telegram "Best per sleeve" line)
+To keep the per-sleeve diversification line on one phone line, sleeve names are shortened to
+5-6 letters. The line shows: `SLEEVE TICKER strikeP dte Δdelta yield% score`.
+
+**ETF / asset-class sleeves**
+
+| Full | Abbr |
+|---|---|
+| Equity Index | `EQIDX` |
+| Intl Equity | `INTLEQ` |
+| Bonds | `BONDS` |
+| Commodity | `COMMOD` |
+| REIT | `REIT` |
+| Energy | `ENERGY` |
+| Financials | `FINANC` |
+| generic ETF | `ETF` |
+
+**Equity sector sleeves (from yfinance)**
+
+| Full | Abbr |
+|---|---|
+| Technology | `TECH` |
+| Financial Services | `FINSVC` |
+| Healthcare | `HEALTH` |
+| Consumer Cyclical | `CONCYC` |
+| Consumer Defensive | `CONDEF` |
+| Communication Services | `COMMS` |
+| Industrials | `INDUS` |
+| Utilities | `UTILS` |
+| Real Estate | `RLEST` |
+| Basic Materials | `MATER` |
+| generic Equity | `EQUITY` |
+
+The map lives in `daily_report.py` (`SLEEVE_ABBR`); add a row there if a new sleeve appears.
+
 ### 13.3 Going live on stops
 Edit `place_stops.py`, set `MODE='live'`, run, review the table, type **YES**. Verify resting
 GTC orders in TWS → Orders. Set back to `'advisory'` for routine re-runs.
