@@ -29,6 +29,22 @@ def _rep(key, default):
 TOP_TICKERS = _rep('top_tickers', 5)   # how many distinct tickers to show
 PER_TICKER  = _rep('per_ticker', 3)    # top contracts shown per ticker
 
+# Short (5-6 char) sleeve labels so the "Best per sleeve" line fits a phone screen.
+SLEEVE_ABBR = {
+    'Equity Index': 'EQIDX', 'Intl Equity': 'INTLEQ', 'Bonds': 'BONDS',
+    'Commodity': 'COMMOD', 'REIT': 'REIT', 'Energy': 'ENERGY',
+    'Financials': 'FINANC', 'ETF': 'ETF',
+    'Technology': 'TECH', 'Financial Services': 'FINSVC', 'Healthcare': 'HEALTH',
+    'Consumer Cyclical': 'CONCYC', 'Consumer Defensive': 'CONDEF',
+    'Communication Services': 'COMMS', 'Industrials': 'INDUS', 'Utilities': 'UTILS',
+    'Real Estate': 'RLEST', 'Basic Materials': 'MATER', 'Equity': 'EQUITY',
+}
+
+
+def _ab(sleeve):
+    s = str(sleeve)
+    return SLEEVE_ABBR.get(s, s[:6].upper())
+
 
 def _path(name):
     return os.path.join(_DIR, name)
@@ -107,10 +123,17 @@ def fmt_screener():
     if 'sleeve' in df.columns:                       # diversification menu (one per sleeve)
         book = (df.groupby('sleeve', as_index=False).head(1)
                   .sort_values('score', ascending=False))
-        slines = [f"{str(row['sleeve'])[:13]:<13} {str(row['ticker']):<5} "
-                  f"{row['strike']:g}P {int(row['dte'])}d s{row['score']:.0f}"
-                  for _, row in book.iterrows()]
-        out.append("<b>Best per sleeve</b>\n" + notify.mono("\n".join(slines)))
+        slines = []
+        for _, row in book.iterrows():
+            d = abs(row['delta']) if pd.notna(row.get('delta')) else 0
+            d_s = ("%.2f" % d).lstrip("0") or "0"   # .19 instead of 0.19 (saves a char)
+            y = row.get('ann_ret_pct')
+            y_s = f"{y:.0f}%" if pd.notna(y) else "—"
+            slines.append(f"{_ab(row['sleeve']):<6} {str(row['ticker']):<5} "
+                          f"{row['strike']:g}P {int(row['dte'])}d "
+                          f"Δ{d_s} {y_s} s{row['score']:.0f}")
+        out.append("<b>Best per sleeve</b>  <i>Δ=delta · %=ann.yield</i>\n"
+                   + notify.mono("\n".join(slines)))
     return "\n\n".join(out)
 
 
