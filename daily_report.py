@@ -64,7 +64,8 @@ def fmt_monitor():
     act = df[df['action'].astype(str).str.startswith(('CLOSE', 'ROLL'))]
     if act.empty:
         return "<b>MONITOR</b> — no positions need action."
-    cols = [c for c in ['ticker', 'type', 'strike', 'dte', 'money', 'pnl_%', 'exposure', 'action']
+    cols = [c for c in ['ticker', 'type', 'strike', 'dte', 'earnings', 'money', 'pnl_%',
+                        'exposure', 'action']
             if c in act.columns]
     out = "<b>MONITOR — action needed</b>\n" + notify.mono(act[cols].to_string(index=False))
     if 'exposure' in df.columns:
@@ -74,7 +75,7 @@ def fmt_monitor():
 
 
 def fmt_rolls():
-    """Top roll suggestion per flagged position, if present."""
+    """Roll suggestions per flagged position — a few different DTEs, if present."""
     f = _path('roll_suggestions.csv')
     if not os.path.exists(f):
         return ''
@@ -84,10 +85,14 @@ def fmt_rolls():
         return ''
     if df.empty:
         return ''
-    best = df.sort_values('score', ascending=False).groupby('pos_ticker', as_index=False).head(1)
-    cols = [c for c in ['pos_ticker', 'pos_strike', 'roll_expiry', 'roll_strike',
+    sort_keys = [k for k in ['roll_dte'] if k in df.columns] or ['score']
+    best = (df.sort_values('score', ascending=False)
+              .groupby('pos_ticker', as_index=False).head(3)
+              .sort_values(['pos_ticker'] + sort_keys))
+    cols = [c for c in ['pos_ticker', 'pos_strike', 'roll_expiry', 'roll_dte', 'roll_strike',
                         'net_credit', 'score'] if c in best.columns]
-    return "<b>TOP ROLL per position</b>\n" + notify.mono(best[cols].to_string(index=False))
+    return ("<b>ROLLS per position</b>  <i>several DTEs</i>\n"
+            + notify.mono(best[cols].to_string(index=False)))
 
 
 def fmt_screener():
@@ -111,7 +116,9 @@ def fmt_screener():
         sleeve = str(r0['sleeve']) if ('sleeve' in sub.columns and pd.notna(r0.get('sleeve'))) else ''
         ivr = r0.get('iv_rank')
         ivr_s = f"IVR{ivr:.0f}" if pd.notna(ivr) else ""
-        hdr = f"<b>{tkr}</b> · {sleeve} · {ivr_s} · ★{r0['score']:.0f}"
+        earn = r0.get('earnings')
+        earn_s = f" · E:{str(earn)[5:]}" if pd.notna(earn) and str(earn) not in ('', 'nan') else ""
+        hdr = f"<b>{tkr}</b> · {sleeve} · {ivr_s} · ★{r0['score']:.0f}{earn_s}"
         lines = []
         for _, x in sub.iterrows():
             d = abs(x['delta']) if pd.notna(x.get('delta')) else 0
@@ -137,6 +144,39 @@ def fmt_screener():
     return "\n\n".join(out)
 
 
+def fmt_covered_calls():
+    """Covered-call suggestions for shares you hold, grouped by ticker (top few each)."""
+    f = _path('covered_calls.csv')
+    if not os.path.exists(f):
+        return ''
+    try:
+        df = pd.read_csv(f)
+    except Exception:
+        return ''
+    if df.empty:
+        return ''
+    out = ["<b>COVERED CALLS</b> — shares you hold"]
+    for tkr in df.drop_duplicates('ticker')['ticker']:
+        sub = df[df['ticker'] == tkr].sort_values('score', ascending=False).head(PER_TICKER)
+        r0 = sub.iloc[0]
+        ivr = r0.get('iv_rank')
+        ivr_s = f"IVR{ivr:.0f}" if pd.notna(ivr) else ""
+        earn = r0.get('earnings')
+        earn_s = f" · E:{str(earn)[5:]}" if pd.notna(earn) and str(earn) not in ('', 'nan') else ""
+        h3 = r0.get('high_3m')
+        h3_s = f" · 3mH {h3:g}" if pd.notna(h3) else ""
+        hdr = f"<b>{tkr}</b> · {ivr_s} · ★{r0['score']:.0f}{h3_s}{earn_s}"
+        lines = []
+        for _, x in sub.iterrows():
+            d = abs(x['delta']) if pd.notna(x.get('delta')) else 0
+            ann = x.get('ann_ret_pct')
+            ann_s = f"{ann:.0f}%/y" if pd.notna(ann) else "—"
+            lines.append(f"{x['strike']:g}C ${x['mid']:.2f} {int(x['dte'])}d "
+                         f"Δ{d:.2f} {ann_s} s{x['score']:.0f}")
+        out.append(hdr + "\n" + notify.mono("\n".join(lines)))
+    return "\n\n".join(out)
+
+
 def main():
     parts = [f"<b>📈 Daily Options Report — {date.today()}</b>"]
     mon = fmt_monitor()
@@ -145,6 +185,9 @@ def main():
     rolls = fmt_rolls()
     if rolls:
         parts.append(rolls)
+    cc = fmt_covered_calls()
+    if cc:
+        parts.append(cc)
     parts.append(fmt_screener())
     msg = "\n\n".join(parts)
     sent = notify.send_telegram(msg)

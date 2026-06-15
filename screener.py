@@ -695,6 +695,7 @@ def screen_ticker(ticker, iv_hist_df, holdings_returns, verbose=True):
                 'otm_%':       otm_pct,
                 'expiry':      exp_date.strftime('%Y-%m-%d'),
                 'dte':         dte,
+                'earnings':    str(earnings) if earnings else None,
                 'strike':      strike,
                 'mid':         round(opt_price, 2),
                 'spread_pct':  round(spread_pct * 100, 1) if spread_pct is not None else None,
@@ -873,7 +874,8 @@ def main():
     df = score_candidates(df, iv_hist_df)
     df = df.sort_values('score', ascending=False, na_position='last').reset_index(drop=True)
 
-    display_cols = ['ticker', 'type', 'stock_price', 'otm_%', 'expiry', 'dte', 'strike', 'mid',
+    display_cols = ['ticker', 'type', 'stock_price', 'otm_%', 'expiry', 'dte', 'earnings',
+                    'strike', 'mid',
                     'lots', 'open_int', 'delta', 'iv_pct', 'iv_hv', 'bb_z',
                     'iv_rank', 'iv_src', 'ann_ret_pct', 'div_corr',
                     'score_option', 'score_technical', 'score_diversify', 'score']
