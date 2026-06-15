@@ -191,7 +191,7 @@ def build_covered_calls(holdings, iv_hist_df):
         if not price or price <= 0:
             print(f"  CC {tkr} ({basis}): no price from yfinance — skipped")
             continue
-        start, n_otm, n_exp = len(rows), 0, 0
+        start, n_otm, n_exp, near = len(rows), 0, 0, []
         hist = S.get_price_history(yf_t)
         hv = S.compute_hv(hist) if hist is not None else None
         iv_rank, iv_src, _, _ = S.ticker_iv_rank(iv_hist_df, tkr)
@@ -242,12 +242,10 @@ def build_covered_calls(holdings, iv_hist_df):
                 if delta is None:
                     continue
                 n_otm += 1                                 # OTM call we could price + delta
-                if not (CC_DELTA_MIN <= delta <= CC_DELTA_MAX):
-                    continue
                 ann_ret = (mid / price) / dte * 365 * 100        # premium yield on the shares, annualized
                 iv_hv = (iv / hv) if (hv and hv > 0) else None
                 rc = ((strike - resist_near) / price) if resist_near else ((strike - price) / price)
-                rows.append({
+                rowd = {
                     'ticker': tkr, 'basis': basis, 'lots': lots,
                     'stock_price': round(price, 2),
                     'expiry': exp_date.strftime('%Y-%m-%d'), 'dte': dte,
@@ -267,10 +265,21 @@ def build_covered_calls(holdings, iv_hist_df):
                     '_ann': ann_ret, '_ivhv': iv_hv if iv_hv else 0.0,
                     '_ivr': iv_rank if iv_rank is not None else 0.0, '_rc': rc,
                     '_long_high': long_high, '_price': price, '_strike': strike,
-                })
+                }
+                if CC_DELTA_MIN <= delta <= CC_DELTA_MAX:
+                    rows.append(rowd)
+                else:                                      # remember for fallback
+                    near.append((abs(delta - (CC_DELTA_MIN + CC_DELTA_MAX) / 2), rowd))
+        fb = 0
+        if len(rows) - start == 0 and near:                # nothing in band — show nearest for rolling
+            near.sort(key=lambda x: x[0])
+            for _, rd in near[:CC_TOP_N]:
+                rows.append(rd)
+                fb += 1
         print(f"  CC {tkr} ({basis}, {lots} lots, ${price:.0f}): "
-              f"{len(rows) - start} in {CC_DELTA_MIN:.2f}-{CC_DELTA_MAX:.2f}Δ band "
-              f"(of {n_otm} priced OTM calls across {n_exp} expiries in "
+              f"{len(rows) - start - fb} in {CC_DELTA_MIN:.2f}-{CC_DELTA_MAX:.2f}Δ band"
+              + (f" + {fb} nearest (none in band)" if fb else "")
+              + f" (of {n_otm} priced OTM calls across {n_exp} expiries in "
               f"{S.MIN_DTE}-{S.MAX_DTE} DTE)")
     df = pd.DataFrame(rows)
     if df.empty:

@@ -14,6 +14,7 @@ sizer recommends lots under a per-trade risk cap.
 """
 
 import os
+import sys
 import warnings
 from collections import Counter
 from datetime import date
@@ -25,6 +26,14 @@ from scipy.optimize import brentq
 from scipy.stats import norm
 
 warnings.filterwarnings('ignore')
+
+# Force UTF-8 console/log output so non-cp932 chars (—, ★, →, Δ) don't crash on a
+# Japanese (cp932) Windows console. Applies process-wide; importers inherit it.
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
 
 # ── Config ────────────────────────────────────────────────────────────────────
 # Equity universe: S&P 100 (as of 2025-09; review periodically). yfinance uses

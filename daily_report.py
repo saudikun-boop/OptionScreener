@@ -10,6 +10,7 @@ so this stays decoupled and works the same on your PC or on GitHub Actions.
 """
 
 import os
+import sys
 from datetime import date
 
 import pandas as pd
@@ -17,6 +18,12 @@ import pandas as pd
 import json
 
 import notify
+
+for _s in (sys.stdout, sys.stderr):          # UTF-8 so non-cp932 chars don't crash logging
+    try:
+        _s.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
 
 _DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -205,6 +212,43 @@ def fmt_covered_calls():
     return "\n\n".join(out)
 
 
+def build_workbook():
+    """Combine the run's CSVs into one multi-tab .xlsx. Returns the path, or None."""
+    sheets = [('screener_output.csv', 'Screener'), ('monitor_output.csv', 'Monitor'),
+              ('roll_suggestions.csv', 'Rolls'), ('covered_calls.csv', 'CallWrites')]
+    present = [(f, n) for f, n in sheets if os.path.exists(_path(f))]
+    if not present:
+        return None
+    out = _path('daily_report.xlsx')
+    try:
+        with pd.ExcelWriter(out, engine='openpyxl') as xw:
+            for f, n in present:
+                try:
+                    pd.read_csv(_path(f)).to_excel(xw, sheet_name=n, index=False)
+                except Exception:
+                    pass
+        return out
+    except Exception as e:
+        print("Workbook build skipped (need openpyxl?):", e)
+        return None
+
+
+def attach_outputs():
+    """Attach a single combined workbook to Telegram; fall back to individual CSVs."""
+    today = date.today()
+    wb = build_workbook()
+    if wb and notify.send_document(wb, caption=f"Daily report — all tables — {today}"):
+        print("Attached daily_report.xlsx")
+        return
+    for fname, label in [('screener_output.csv', 'Screener'),
+                         ('monitor_output.csv', 'Monitor'),
+                         ('roll_suggestions.csv', 'Rolls'),
+                         ('covered_calls.csv', 'Call-writes')]:
+        path = _path(fname)
+        if os.path.exists(path) and notify.send_document(path, caption=f"{label} — {today}"):
+            print(f"Attached {fname}")
+
+
 def main():
     parts = [f"<b>📈 Daily Options Report — {date.today()}</b>"]
     mon = fmt_monitor()
@@ -221,17 +265,9 @@ def main():
     sent = notify.send_telegram(msg)
     print("Report sent." if sent else "Report NOT sent (see message above).")
 
-    # Attach the full CSVs so they can be opened on the phone (no screen-width limits)
+    # Attach the full tables (combined workbook) so they open cleanly on the phone
     if ATTACH_CSV:
-        today = date.today()
-        for fname, label in [('screener_output.csv', 'Screener — full candidates'),
-                             ('monitor_output.csv', 'Monitor — open positions'),
-                             ('roll_suggestions.csv', 'Roll suggestions'),
-                             ('covered_calls.csv', 'Call-write suggestions')]:
-            path = _path(fname)
-            if os.path.exists(path):
-                if notify.send_document(path, caption=f"{label} — {today}"):
-                    print(f"Attached {fname}")
+        attach_outputs()
 
 
 if __name__ == '__main__':

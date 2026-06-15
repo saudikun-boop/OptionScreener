@@ -147,17 +147,26 @@ name has deep, liquid options — liquidity matters more to a put seller than ra
 | Liquidity — spread | bid-ask ≤ 10% of mid | Wide spreads erase edge on entry + exit. |
 | Liquidity — OI | open interest ≥ 100 (when present) | Tradability. `ALLOW_MISSING_OI` lets weekend 0/NaN OI through (data artifact, not illiquidity). |
 | Earnings | skip expiries that straddle the next earnings date | Avoid binary vol-crush / gap risk. (Equities only.) |
-| Regime | `REGIME_MODE='downtrend'`: skip only **confirmed downtrends** | See below. |
+| Regime | `REGIME_MODE='breakdown'`: skip only **active sharp breakdowns** (steep drop OR vol spike) | See below. |
 | Solvency | drop clearly distressed balance sheets | "Don't get assigned a falling knife." Equities only. |
 | Fundamentals | quality bar (FCF>0, rev growth ≥0, ROE ≥8%, fwd P/E ≤60) | Quality screen; missing data never rejects. Equities only. |
 
-**Regime gate — true falling knives only (revised).** A hard "price > 200-MA" gate rejects
-healthy names that are simply consolidating below their 200-MA — which are fine for put selling
-(you only need price to stay above your strike). The `'downtrend'` gate therefore skips a ticker
-**only when it is genuinely still breaking down**: the 200-MA is sloping down (>2% over ~20
-sessions) **and** price is still making (within `NEW_LOW_TOL` of) a **new ~6-month low**. A name
-that fell hard and is now *basing above its prior low* passes the gate and is judged by the score.
-Modes: `'gate'` (strict, price>200MA), `'downtrend'` (default), `'score'`/`'off'` (no gate).
+**Regime gate — active breakdowns only (revised again).** The point of avoiding a "falling
+knife" is the **steepness of the move, not the price level** — a name that quietly ground down
+to a low but is now calm is a fine put-sell, whereas one crashing *today* is not. So the gate no
+longer looks at 200-MA position or new lows at all. `REGIME_MODE='breakdown'` (default) skips a
+ticker only when it is in an **active sharp breakdown**, defined as either:
+
+- **Steep drop** — price has fallen ≥ `DROP_PCT` (15%) from its high over the last `DROP_WINDOW`
+  (10) trading days (`dd_fast` = peak→now drawdown over the window), **or**
+- **Volatility spike** — short-window realized vol `hv_fast` (`VOL_FAST`=10d, annualized) is ≥
+  `VOL_RATIO` (1.8) × its `VOL_SLOW` (63d) baseline **and** ≥ `VOL_ABS` (50%). Both conditions
+  must hold so a normally-calm name merely doubling off a tiny base doesn't trip it.
+
+A stock that fell months ago and is now basing (vol back to normal) passes through to the score
+(including the oversold bonus). Modes: `'breakdown'` (default), `'gate'` (legacy strict
+price<200-MA), `'score'`/`'off'` (no gate). The old `downtrend_slope`/`new_low_tol` knobs are
+retired (still accepted but unused).
 
 **Oversold flag (Bollinger z-score).** Deep oversold is an *opportunity* for a mean-reverting put
 seller (rich premium + bounce potential), not a danger — so it is a **score bonus, not a gate**.
@@ -245,6 +254,8 @@ Connects to IB Gateway, pulls **all** option positions, and for each computes:
   `avgCost` is per-contract → divide by 100 for per-share.)
 - **Moneyness** (`stock`, `money`) — for short puts: `ITM` if stock<strike, `ATM` if within
   `NEAR_ATM_BUFFER` (3%) above, else `OTM`.
+- **Earnings** — the next earnings date per ticker (`get_next_earnings`), shown compactly as
+  **M/D** in the console and the Telegram lines so you can see binary risk at a glance.
 - **Exposure** — for short puts, **max loss at the stop**: `strike × ASSUMED_DRAWDOWN × 100 ×
   |qty|` (your "−15% rule" expressed as dollars at risk). A whole-book total is printed as a
   **% of NLV**.
@@ -261,13 +272,58 @@ baseline).
 
 ### 6.1 Roll suggestions (reuse the screener's brain)
 For each **close-flagged or ATM/ITM single-leg short put**, the monitor runs the *same*
-screener gates + scoring on that ticker's **later-expiry** puts and shows the **top 3 by
-composite score**, annotated with **net credit** = new put mid − cost to buy back the current
-put. A positive net credit means you're paid to roll out. If the ticker is now gated (e.g.,
-confirmed downtrend), there are no roll candidates → the implicit recommendation is *close*.
-Note: roll composite scores rank candidates *within* that ticker, so they're not directly
-comparable to a global screener run. (Rolls currently cover short puts only; calls/combos are
-future work.)
+screener gates + scoring on that ticker's **later-expiry** puts, annotated with **net credit** =
+new put mid − cost to buy back the current put (positive = you're paid to roll out). If the
+ticker is now gated, there are no roll candidates → the implicit recommendation is *close*.
+
+**DTE variety (revised).** Instead of the top 3 strikes by score (which clustered into a single
+expiry), the monitor now shows the **best-scoring strike per expiry**, then the **nearest few
+expiries**, so you can compare several *different DTEs* side by side rather than three strikes in
+one month. Roll composite scores rank candidates *within* that ticker, so they aren't directly
+comparable to a global screener run. (Rolls currently cover short puts only; short calls/combos
+are future work — for now manage short calls via the call-write table in §6.2.)
+
+### 6.2 Call-write suggestions (covered calls & roll-ups)
+For every underlying where you have **long exposure** — shares (≥100) or long calls — the monitor
+proposes calls to **sell**, the mirror of the put-entry logic. Shares → a true covered call;
+long calls → selling a higher call against them = a vertical/diagonal **spread / roll-up**. There
+are **no gates** (every eligible call is scored and surfaced); writes `covered_calls.csv`.
+
+**Eligibility & coverage.** Writable lots = `shares/100 + long calls − calls already written`.
+With `respect_coverage=true` a fully-covered name (e.g. 200 shares with 2 calls already sold)
+nets to 0 and is **skipped**; set it `false` (current default) to always show every underlying so
+the suggestions double as **roll targets** for calls you already hold.
+
+**Conservative strikes.** Only OTM calls with delta in `CC_DELTA_MIN..CC_DELTA_MAX` (0.15–0.25)
+— further OTM, so the shares are less likely to be called away.
+
+**Score = option-edge + resistance + a small 3-month bonus:**
+
+- **Option edge** (`CC_W_OPTION`, 0.6): IV rank, IV/HV, and annualized premium yield on the
+  shares (`mid/stock /DTE×365`), **percentile-ranked across the whole candidate pool**.
+- **Resistance cushion** (`CC_W_RESIST`, 0.4): how far the strike sits **above near-term
+  resistance** — the higher of the 20-day upper Bollinger band and the 20-day swing high —
+  percentile-ranked. A strike above resistance is less likely to be breached (you keep the
+  shares). This is the mirror of the put side's *support* cushion.
+- **3-month-high bonus** (capped at `CC_LONG_BONUS`, 6 pts): fires only when the strike clears
+  the ~3-month high (`long_high_days`=63) and/or the stock is within `near_high_pct` (3%) of that
+  high. The longer high is shown as the `high_3m` / `strike_vs_3mhigh_%` columns regardless, but
+  only *nudges* the score in the cases where it's genuinely predictive — avoiding a flood of
+  uninformative long-horizon signals on a 1-month option.
+
+`score = clip(0.6·option_edge + 0.4·resistance + bonus, 0, 100)`.
+
+**Worked example.** Suppose you hold 300 WMT shares (3 lots), WMT = $121, the 20-day upper band
+is $124 and the 20-day swing high $126 (so near-term resistance ≈ **$126**), and the 3-month high
+is $135. A **$122 call, 47 DTE** has Δ0.23 (inside the band), mid $3.80 → annualized yield
+≈ `3.80/121/47×365 ≈ 24%`. Its resistance cushion is `(122 − 126)/121 = −3.3%` (below resistance —
+not ideal), and it's well below the 3-month high, so **no bonus**. Across the pool it lands around
+the middle on resistance and decent on premium → composite ≈ **67**. Contrast a **$127 call**:
+cushion `(127 − 126)/121 = +0.8%` (clears near-term resistance), still below the $135 3-month high
+(no bonus), a bit less premium — it scores **higher on resistance** but lower on yield, so the
+two compete and the system surfaces both for you to choose your aggressiveness. Had the stock been
+near $134 (within 3% of the $135 3-month high) and the strike ≥ $135, the capped **+6 bonus**
+would kick in — writing calls "at the top of the range," exactly when it's most attractive.
 
 ---
 
@@ -306,9 +362,16 @@ transmits unless you set `MODE='live'` *and* type `YES`.
   `telegram_config.json` (local). Splits long messages under Telegram's 4096-char limit and
   HTML-escapes monospace tables.
 - **`daily_report.py`** — reads `screener_output.csv` (+ `monitor_output.csv`,
-  `roll_suggestions.csv` if present) and sends a digest: **monitor actions + exposure**,
-  **top roll per flagged position**, **screener top-10 + best-per-sleeve**. Decoupled from the
-  other scripts (reads their CSVs), so it behaves identically on PC and cloud.
+  `roll_suggestions.csv`, `covered_calls.csv` if present) and sends a **phone-friendly** digest:
+  monitor actions + exposure, rolls (several DTEs), **call-write suggestions**, and the screener
+  (top-5 tickers × top-3 contracts + best-per-sleeve). Decoupled from the other scripts (reads
+  their CSVs, skipping any that are absent), so it behaves identically on PC and cloud.
+  - **Compact layout** — wide tables were replaced with one-line-per-item rows (sleeve names
+    abbreviated, earnings as M/D, deltas without the leading zero) so nothing wraps on a phone.
+  - **CSV attachments** — after the text digest, `notify.send_document()` uploads the full CSVs
+    as Telegram file attachments (open them in any spreadsheet app — no screen-width limits).
+    Toggle with `report.attach_csv` (default `true`). The cloud run attaches the screener CSV;
+    the monitor/roll/call-write CSVs attach only on PC runs (they need Gateway to be produced).
 
 ---
 
@@ -330,7 +393,9 @@ schtasks /Create /TN "OptionsDailyReport" /TR "C:\ibkr_screener\run_daily.bat" /
 schtasks /Create /TN "OptionsWeeklyIV"  /TR "C:\ibkr_screener\run_weekly.bat" /SC WEEKLY /D SUN /ST 17:00
 ```
 `monitor.py` is fault-tolerant: if Gateway is down it skips the monitor section rather than
-crashing, so the screener/report still run.
+crashing, so the screener/report still run. Both batch files now tee their full output (incl. the
+call-write / coverage diagnostics) to `logs\daily.log` / `logs\weekly.log` and echo it to the
+console, so scheduled runs are reviewable after the fact.
 
 ### 9.3 IBKR login reality
 A fully unattended login is not possible (2FA). The standard pattern: run **IB Gateway with
@@ -348,7 +413,7 @@ scheduled jobs just connect to the already-running Gateway. (Fuller automation =
 | 1 | Options data source | **yfinance + Black-Scholes** (IBKR options data is paid). Keeps the screener Gateway-free. |
 | 2 | IV Rank source | **Option A** — separate IBKR updater writes a full-year IV series; screener reads it. Single-source consistency (never mix IBKR + yf in one rank). |
 | 3 | Fundamentals | **Gate, not score** — premium shouldn't buy past quality; per-row percentile skew. |
-| 4 | Regime filter | Hard 200-MA → **confirmed-downtrend gate** — don't reject healthy basers; only block falling knives. |
+| 4 | Regime filter | Evolved: hard 200-MA → confirmed-downtrend → **breakdown gate** (steep drop OR vol spike). It's the *steepness* of the move that matters, not the price level — a calm base at a low passes. |
 | 5 | Weekend OI wipeout | `ALLOW_MISSING_OI` — 0/NaN OI is a closed-market artifact, not illiquidity. |
 | 6 | Diversification | **Score vs current holdings** (gradual book) **+ per-sleeve view** (forces representation). Absolute, not percentile. |
 | 7 | Negative correlation | Only real via **cross-asset ETFs** (bonds/gold); equities cluster toward +1 in selloffs. |
@@ -356,8 +421,11 @@ scheduled jobs just connect to the already-running Gateway. (Fuller automation =
 | 9 | Account size | Pull **IBKR NetLiquidation** (monitor → `account.json`); hardcode is fallback. |
 | 10 | Stop basis | **Underlying** trigger (immune to option-quote noise) over option-price stop; configurable. |
 | 11 | Stop level | `STOP_DROP` tuned 15% → 10% → **7%**, decoupled from the 15% sizing assumption. |
-| 12 | Rolls | Reuse the **screener scoring** on the same ticker's later expiries; top-3 + net credit. |
+| 12 | Rolls | Reuse the **screener scoring** on the same ticker's later expiries; **best per expiry across several DTEs** + net credit. |
 | 13 | Delivery / host | **Telegram** (free) + **GitHub Actions** (cloud screener) and **Task Scheduler** (PC full digest). |
+| 14 | Call-writes | **Covered-call / roll-up suggestions** on held shares & long calls: option-edge + resistance + capped 3-month-high bonus, conservative 0.15–0.25Δ. Coverage toggle nets out calls already written. |
+| 15 | Earnings dates | Surfaced as an `earnings` column (screener + monitor), shown as **M/D** in console and Telegram. |
+| 16 | CSV to phone | `daily_report` also **attaches the full CSVs** to Telegram (`sendDocument`) so detail is openable on the phone without screen-width limits. |
 
 ---
 
@@ -371,6 +439,7 @@ scheduled jobs just connect to the already-running Gateway. (Fuller automation =
 | `stock_price` | Underlying spot |
 | `otm_%` | Downside cushion to strike = `(price−strike)/price×100` (positive = OTM) |
 | `expiry`, `dte` | Expiration date; days to expiry |
+| `earnings` | Next earnings date (shown as M/D in displays); blank for ETFs |
 | `strike`, `mid` | Strike; option mid price |
 | `spread_pct` | Bid-ask spread as % of mid (None when no two-sided quote) |
 | `open_int`, `volume` | Option open interest / day volume |
@@ -390,6 +459,7 @@ scheduled jobs just connect to the already-running Gateway. (Fuller automation =
 | Field | Meaning |
 |---|---|
 | `combo` | `COMBO` if part of a multi-leg group |
+| `earnings` | Next earnings date (M/D) |
 | `stock`, `money` | Underlying spot; ITM/ATM/OTM |
 | `qty`, `entry`, `current` | Contracts (− short); entry & current option price |
 | `pnl_%` | Position P&L (% of credit) |
@@ -397,7 +467,21 @@ scheduled jobs just connect to the already-running Gateway. (Fuller automation =
 | `action`, `reason` | CLOSE / ROLL? / HOLD and why |
 
 **Roll suggestions (`roll_suggestions.csv`)** — `pos_*` describe the position being rolled;
-`roll_*` the candidate; `net_credit` = new mid − buyback; plus the candidate's score.
+`roll_*` the candidate (now one per expiry across several DTEs); `net_credit` = new mid −
+buyback; plus the candidate's score.
+
+**Call-writes (`covered_calls.csv`)**
+
+| Field | Meaning |
+|---|---|
+| `basis` | `shares` (true covered call) or `long call` (roll-up / spread) |
+| `lots` | Writable lots (net of calls already written, unless coverage off) |
+| `strike`, `otm_%`, `mid`, `delta` | Call strike; % OTM; mid; call delta (0.15–0.25 band) |
+| `iv_rank`, `iv_hv`, `ann_ret_pct` | Option-edge inputs (premium yield is on the shares) |
+| `income` | `mid × 100 × lots` (premium collected) |
+| `resist_cushion_%` | Strike vs near-term resistance (20-day band/swing high); + = above |
+| `high_3m`, `strike_vs_3mhigh_%` | The ~3-month high and the strike's distance to it |
+| `score_option`/`score_resist`/`long_bonus`/`score` | Bucket scores, capped 3-mo bonus, composite |
 
 ---
 
@@ -408,10 +492,13 @@ repo-tracked `config.json` that `screener.py` loads at startup and that `monitor
 `place_stops.py` read via the screener. Editing it changes behaviour without touching code, and
 because it's committed, the **cloud (GitHub Actions) and your PC run identical settings**. Sections:
 `weights` (option/technical/diversify), `gates` (DTE, delta, spread, OI, ROE, growth, P/E),
-`regime` (mode, downtrend_slope, new_low_tol), `oversold` (z_threshold, bonus), `sizing`
+`regime` (mode, drop_window, drop_pct, vol_fast, vol_slow, vol_ratio, vol_abs), `oversold`
+(z_threshold, bonus), `report` (top_tickers, per_ticker, **attach_csv**), `sizing`
 (account_size_fallback, max_risk_pct, assumed_drawdown), `monitor` (profit_target_pct,
-hard_close_dte, near_atm_buffer, roll_top_n), `stops` (basis, drop, credit_mult). Any key missing
-from the file falls back to the code default. After editing: `git add config.json && git commit && git push`.
+hard_close_dte, near_atm_buffer, roll_top_n), **`covered_calls`** (delta_min, delta_max,
+w_option, w_resist, resist_window, long_high_days, long_high_bonus, near_high_pct, top_n,
+respect_coverage), `stops` (basis, drop, credit_mult). Any key missing from the file falls back
+to the code default. After editing: `git add config.json && git commit && git push`.
 
 **`screener.py`** (code defaults, overridden by config.json)
 
@@ -424,8 +511,9 @@ from the file falls back to the code default. After editing: `git add config.jso
 | `MAX_SPREAD_PCT` | 0.10 | Liquidity (spread) gate |
 | `MIN_OPEN_INTEREST` | 100 | Liquidity (OI) gate |
 | `ALLOW_MISSING_OI` | True | Let 0/NaN OI through (weekends) |
-| `REGIME_MODE` | `'downtrend'` | Regime gate mode |
-| `DOWNTREND_SLOPE`/`NEAR_LOW_PCT` | −0.02 / 0.03 | Downtrend thresholds |
+| `REGIME_MODE` | `'breakdown'` | Regime gate mode (`breakdown`/`gate`/`off`) |
+| `DROP_WINDOW`/`DROP_PCT` | 10 / 0.15 | Steep-drop test: peak→now fall over N days |
+| `VOL_FAST`/`VOL_SLOW`/`VOL_RATIO`/`VOL_ABS` | 10 / 63 / 1.8 / 0.50 | Vol-spike test (fast vs baseline realized vol) |
 | `REQUIRE_SOLVENCY`/`REQUIRE_FUNDAMENTALS` | True | Quality gates |
 | `MIN_ROE`/`MIN_REV_GROWTH`/`MAX_FORWARD_PE` | 0.08 / 0.0 / 60 | Fundamental thresholds |
 | `W_OPTION`/`W_TECHNICAL`/`W_DIVERSIFY` | (see file) | Composite weights |
@@ -435,7 +523,10 @@ from the file falls back to the code default. After editing: `git add config.jso
 
 **`place_stops.py`**: `MODE` (advisory/live), `STOP_BASIS`, `STOP_DROP` (0.07), `CREDIT_MULT`
 (2.5), `PORT` (4001). **`monitor.py`**: `PROFIT_TARGET_PCT` (0.70), `HARD_CLOSE_DTE` (21),
-`NEAR_ATM_BUFFER` (0.03), `ROLL_TOP_N` (3). **`update_iv_history.py`**: `PORT`, `CLIENT_ID`,
+`NEAR_ATM_BUFFER` (0.03), `ROLL_TOP_N` (3); **call-writes** `CC_DELTA_MIN/MAX` (0.15/0.25),
+`CC_W_OPTION/CC_W_RESIST` (0.6/0.4), `CC_RESIST_WIN` (20), `CC_LONG_DAYS` (63),
+`CC_LONG_BONUS` (6), `CC_NEAR_HIGH` (0.03), `CC_TOP_N` (3), `CC_RESPECT_COVER` (False).
+**`daily_report.py`**: `ATTACH_CSV` (True). **`update_iv_history.py`**: `PORT`, `CLIENT_ID`,
 `IBKR_SYMBOL` map. **client IDs**: 1=test, 2=screener(reserved), 3=monitor, 4=updater,
 5=iv-test, 6=stops.
 
@@ -588,7 +679,9 @@ exposure — only appear in the PC digest, since the cloud can't reach IB Gatewa
 
 *(Embedded below: `screener.py`, `update_iv_history.py`, `monitor.py`, `place_stops.py`,
 `notify.py`, `daily_report.py`, `.github/workflows/screener.yml`, `requirements.txt`,
-`.gitignore`. These are snapshots — the live files in the repo are authoritative.)*
+`.gitignore`. These are snapshots — the live files in the repo are authoritative. Note: this
+embedded copy predates the breakdown regime gate, call-write suggestions, earnings column, and
+CSV-attachment changes documented in §5–§12 above; read the repo for current source.)*
 
 
 ### screener.py
