@@ -18,6 +18,7 @@ import requests
 
 _CFG = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'telegram_config.json')
 _API = "https://api.telegram.org/bot{token}/sendMessage"
+_DOC = "https://api.telegram.org/bot{token}/sendDocument"
 _MAX = 3900   # Telegram hard limit is 4096; leave headroom
 
 
@@ -75,6 +76,31 @@ def send_telegram(text, token=None, chat=None):
             print("Telegram send failed:", e)
             ok = False
     return ok
+
+
+def send_document(path, caption='', token=None, chat=None):
+    """Upload a file (e.g. a CSV) to Telegram so it can be opened on the phone."""
+    token = token or _creds()[0]
+    chat = chat or _creds()[1]
+    if not token or not chat:
+        print("Telegram not configured — document not sent:", path)
+        return False
+    if not os.path.exists(path):
+        return False
+    try:
+        with open(path, 'rb') as fh:
+            r = requests.post(
+                _DOC.format(token=token),
+                data={'chat_id': chat, 'caption': caption[:1024], 'parse_mode': 'HTML'},
+                files={'document': (os.path.basename(path), fh, 'text/csv')},
+                timeout=60)
+        if r.status_code != 200:
+            print("Telegram doc error:", r.status_code, r.text[:300])
+            return False
+        return True
+    except Exception as e:
+        print("Telegram document send failed:", e)
+        return False
 
 
 if __name__ == '__main__':

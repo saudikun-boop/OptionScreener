@@ -28,6 +28,7 @@ def _rep(key, default):
         return default
 TOP_TICKERS = _rep('top_tickers', 5)   # how many distinct tickers to show
 PER_TICKER  = _rep('per_ticker', 3)    # top contracts shown per ticker
+ATTACH_CSV  = _rep('attach_csv', True) # also attach the full CSVs to Telegram
 
 # Short (5-6 char) sleeve labels so the "Best per sleeve" line fits a phone screen.
 SLEEVE_ABBR = {
@@ -219,6 +220,18 @@ def main():
     msg = "\n\n".join(parts)
     sent = notify.send_telegram(msg)
     print("Report sent." if sent else "Report NOT sent (see message above).")
+
+    # Attach the full CSVs so they can be opened on the phone (no screen-width limits)
+    if ATTACH_CSV:
+        today = date.today()
+        for fname, label in [('screener_output.csv', 'Screener — full candidates'),
+                             ('monitor_output.csv', 'Monitor — open positions'),
+                             ('roll_suggestions.csv', 'Roll suggestions'),
+                             ('covered_calls.csv', 'Call-write suggestions')]:
+            path = _path(fname)
+            if os.path.exists(path):
+                if notify.send_document(path, caption=f"{label} — {today}"):
+                    print(f"Attached {fname}")
 
 
 if __name__ == '__main__':
