@@ -190,26 +190,21 @@ def fmt_covered_calls():
         return ''
     if df.empty:
         return ''
-    out = ["<b>CALL WRITES</b> — shares &amp; long calls"]
-    for tkr in df.drop_duplicates('ticker')['ticker']:
-        sub = df[df['ticker'] == tkr].sort_values('score', ascending=False).head(PER_TICKER)
-        r0 = sub.iloc[0]
-        ivr = r0.get('iv_rank')
-        ivr_s = f"IVR{ivr:.0f}" if pd.notna(ivr) else ""
-        basis = str(r0.get('basis')) if pd.notna(r0.get('basis')) else ''
-        b_s = 'sh' if basis == 'shares' else ('call' if basis == 'long call' else basis)
-        earn = r0.get('earnings')
-        earn_s = f" E{_md(earn)}" if pd.notna(earn) and str(earn) not in ('', 'nan') else ""
-        hdr = f"<b>{tkr}</b> {b_s} {ivr_s} ★{r0['score']:.0f}{earn_s}"
-        lines = []
-        for _, x in sub.iterrows():
-            d = abs(x['delta']) if pd.notna(x.get('delta')) else 0
-            ann = x.get('ann_ret_pct')
-            ann_s = f"{ann:.0f}%/y" if pd.notna(ann) else "—"
-            lines.append(f"{x['strike']:g}C ${x['mid']:.2f} {int(x['dte'])}d "
-                         f"Δ{d:.2f} {ann_s} s{x['score']:.0f}")
-        out.append(hdr + "\n" + notify.mono("\n".join(lines)))
-    return "\n\n".join(out)
+    df = df.sort_values('score', ascending=False)
+    top = (df.groupby('ticker', as_index=False).head(PER_TICKER)
+             .sort_values(['ticker', 'score'], ascending=[True, False]))
+    lines = []
+    for _, x in top.iterrows():
+        d = abs(x['delta']) if pd.notna(x.get('delta')) else 0
+        d_s = ("%.2f" % d).lstrip("0") or "0"
+        ann = x.get('ann_ret_pct')
+        ann_s = f"{ann:.0f}%" if pd.notna(ann) else "—"
+        e = x.get('earnings')
+        e_s = f" E{_md(e)}" if pd.notna(e) and str(e) not in ('', 'nan') else ""
+        lines.append(f"{str(x['ticker']):<5} {x['strike']:g}C {int(x['dte'])}d "
+                     f"Δ{d_s} {ann_s} s{x['score']:.0f}{e_s}")
+    return ("<b>CALL WRITES</b>  <i>sell vs shares/long calls</i>\n"
+            + notify.mono("\n".join(lines)))
 
 
 def build_workbook():
