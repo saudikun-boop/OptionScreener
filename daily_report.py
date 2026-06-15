@@ -228,20 +228,40 @@ def build_workbook():
         return None
 
 
+def build_combined_csv():
+    """Fallback when openpyxl is missing: stack all CSVs into ONE file with a 'section'
+    column (so you still get a single attachment, never four)."""
+    sheets = [('screener_output.csv', 'Screener'), ('monitor_output.csv', 'Monitor'),
+              ('roll_suggestions.csv', 'Rolls'), ('covered_calls.csv', 'CallWrites')]
+    frames = []
+    for f, n in sheets:
+        p = _path(f)
+        if os.path.exists(p):
+            try:
+                d = pd.read_csv(p)
+                d.insert(0, 'section', n)
+                frames.append(d)
+            except Exception:
+                pass
+    if not frames:
+        return None
+    out = _path('daily_report.csv')
+    pd.concat(frames, ignore_index=True).to_csv(out, index=False)
+    return out
+
+
 def attach_outputs():
-    """Attach a single combined workbook to Telegram; fall back to individual CSVs."""
+    """Attach ONE combined file to Telegram: a multi-tab .xlsx if openpyxl is available,
+    otherwise a single combined .csv. Never sends four separate CSVs."""
     today = date.today()
     wb = build_workbook()
     if wb and notify.send_document(wb, caption=f"Daily report — all tables — {today}"):
         print("Attached daily_report.xlsx")
         return
-    for fname, label in [('screener_output.csv', 'Screener'),
-                         ('monitor_output.csv', 'Monitor'),
-                         ('roll_suggestions.csv', 'Rolls'),
-                         ('covered_calls.csv', 'Call-writes')]:
-        path = _path(fname)
-        if os.path.exists(path) and notify.send_document(path, caption=f"{label} — {today}"):
-            print(f"Attached {fname}")
+    print("Excel unavailable (install openpyxl) — sending one combined CSV instead.")
+    cb = build_combined_csv()
+    if cb and notify.send_document(cb, caption=f"Daily report — all tables — {today}"):
+        print("Attached daily_report.csv (combined)")
 
 
 def main():

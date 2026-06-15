@@ -13,6 +13,7 @@ monitor_output.csv
 roll_suggestions.csv
 covered_calls.csv
 daily_report.xlsx
+daily_report.csv
 logs/
 
 # NOTE: data/iv_history.csv is intentionally NOT ignored —
