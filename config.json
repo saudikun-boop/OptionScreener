@@ -7,7 +7,8 @@
                 "max_spread_pct": 0.10, "min_open_interest": 100,
                 "min_roe": 0.08, "min_rev_growth": 0.0, "max_forward_pe": 60 },
 
-  "regime":   { "mode": "downtrend", "downtrend_slope": -0.02, "new_low_tol": 0.02 },
+  "regime":   { "mode": "breakdown", "drop_window": 10, "drop_pct": 0.15,
+                "vol_fast": 10, "vol_slow": 63, "vol_ratio": 1.8, "vol_abs": 0.50 },
 
   "oversold": { "z_threshold": -2.5, "bonus": 8.0 },
 

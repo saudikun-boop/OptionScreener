@@ -139,7 +139,15 @@ MIN_REV_GROWTH = _c('gates', 'min_rev_growth', MIN_REV_GROWTH)
 MAX_FORWARD_PE = _c('gates', 'max_forward_pe', MAX_FORWARD_PE)
 REGIME_MODE = _c('regime', 'mode', REGIME_MODE)
 DOWNTREND_SLOPE = _c('regime', 'downtrend_slope', DOWNTREND_SLOPE)
-NEW_LOW_TOL = _c('regime', 'new_low_tol', 0.02)         # within this % of the 6-mo low = "still at new lows"
+NEW_LOW_TOL = _c('regime', 'new_low_tol', 0.02)         # (legacy) within this % of the 6-mo low
+# Breakdown gate — skip ACTIVE sharp breakdowns (steep drop OR a volatility spike),
+# regardless of absolute price level. Tunable in config.json -> "regime".
+DROP_WINDOW = int(_c('regime', 'drop_window', 10))      # lookback (trading days) for the drop test
+DROP_PCT    = _c('regime', 'drop_pct', 0.15)            # block if peak->now fall over the window >= this
+VOL_FAST    = int(_c('regime', 'vol_fast', 10))         # short realized-vol window
+VOL_SLOW    = int(_c('regime', 'vol_slow', 63))         # baseline realized-vol window (~3 months)
+VOL_RATIO   = _c('regime', 'vol_ratio', 1.8)            # block if fast/slow vol >= this ...
+VOL_ABS     = _c('regime', 'vol_abs', 0.50)             # ... AND fast vol is at least this (annualized)
 OVERSOLD_Z = _c('oversold', 'z_threshold', -2.5)        # price this many sigma below 20-day mean = deeply oversold
 OVERSOLD_BONUS = _c('oversold', 'bonus', 8.0)           # points added to technical score when oversold
 ACCOUNT_SIZE = _c('sizing', 'account_size_fallback', ACCOUNT_SIZE)
@@ -251,7 +259,8 @@ def compute_technicals(hist):
     """50/200-MA (+slope), RSI(14), Bollinger %B & z-score, 20/50/126-day swing lows."""
     out = {'ma50': None, 'ma200': None, 'ma200_slope': None, 'rsi': None,
            'bb_pctb': None, 'bb_z': None, 'swing_low_20': None,
-           'swing_low_50': None, 'swing_low_126': None}
+           'swing_low_50': None, 'swing_low_126': None,
+           'dd_fast': None, 'hv_fast': None, 'hv_slow': None, 'vol_ratio': None}
     try:
         close = hist['Close'].dropna()
         low = hist['Low'].dropna() if 'Low' in hist else close
@@ -275,6 +284,15 @@ def compute_technicals(hist):
                 upper, lower = mid + 2 * sd, mid - 2 * sd
                 out['bb_pctb'] = float((close.iloc[-1] - lower) / (upper - lower))
                 out['bb_z'] = float((close.iloc[-1] - mid) / sd)   # sigma vs 20-day mean
+        rets = close.pct_change().dropna()
+        if len(close) > DROP_WINDOW:                       # peak->now drawdown over a fast window
+            recent = close.tail(DROP_WINDOW + 1)
+            out['dd_fast'] = float(close.iloc[-1] / recent.max() - 1.0)
+        if len(rets) >= VOL_SLOW:                          # short vs baseline realized vol (annualized)
+            out['hv_fast'] = float(rets.tail(VOL_FAST).std() * np.sqrt(252))
+            out['hv_slow'] = float(rets.tail(VOL_SLOW).std() * np.sqrt(252))
+            if out['hv_slow'] and out['hv_slow'] > 0:
+                out['vol_ratio'] = out['hv_fast'] / out['hv_slow']
         if len(close) >= 15:
             diff = close.diff()
             gain = diff.clip(lower=0).rolling(14).mean().iloc[-1]
@@ -291,20 +309,29 @@ def compute_technicals(hist):
 
 def regime_block(price, tech):
     """Whether to skip a ticker on trend grounds, per REGIME_MODE. -> (bool, reason).
-    'downtrend' now means a TRUE falling knife: the 200-MA is still falling AND price
-    is still making (near) a new ~6-month low. Names that dropped then based above their
-    low pass through to be judged by the score (incl. the oversold bonus)."""
-    ma200 = tech.get('ma200')
-    if REGIME_MODE in ('score', 'off') or ma200 is None:
+
+    'breakdown' (default): skip a name only when it is in an ACTIVE sharp breakdown —
+    a steep recent drop OR a volatility spike — not merely because it trades at a low.
+    The point of avoiding a 'falling knife' is the steepness of the move, not the level:
+      • steep drop  — price has fallen >= DROP_PCT from its high over the last DROP_WINDOW days
+      • vol spike   — short-window realized vol is >= VOL_RATIO x its baseline AND >= VOL_ABS
+    Anything that fell and is now basing (vol back to normal) passes through to the score.
+    'gate' = old hard 200-MA rule; 'score'/'off' = no regime gate."""
+    if REGIME_MODE in ('score', 'off'):
         return False, ''
     if REGIME_MODE == 'gate':
+        ma200 = tech.get('ma200')
+        if ma200 is None:
+            return False, ''
         return (price < ma200), f"price ${price:.2f} < 200-MA ${ma200:.2f}"
-    slope = tech.get('ma200_slope')
-    low126 = tech.get('swing_low_126')
-    falling = slope is not None and slope < DOWNTREND_SLOPE
-    new_low = low126 is not None and price <= low126 * (1 + NEW_LOW_TOL)
-    if falling and new_low:
-        return True, "falling knife (200-MA falling + still at a new ~6-month low)"
+    # 'breakdown' (also accepts legacy 'downtrend')
+    dd = tech.get('dd_fast')
+    if dd is not None and dd <= -DROP_PCT:
+        return True, f"steep drop {dd*100:.0f}% over {DROP_WINDOW}d"
+    hv_fast, vr = tech.get('hv_fast'), tech.get('vol_ratio')
+    if hv_fast is not None and vr is not None and vr >= VOL_RATIO and hv_fast >= VOL_ABS:
+        return True, (f"vol spike: {VOL_FAST}d HV {hv_fast*100:.0f}% = {vr:.1f}x "
+                      f"{VOL_SLOW}d baseline")
     return False, ''
 
 
