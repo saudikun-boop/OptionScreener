@@ -41,7 +41,19 @@ CC_LONG_DAYS  = int(_cc.get('long_high_days', 63))     # ~3-month high lookback
 CC_LONG_BONUS = _cc.get('long_high_bonus', 6.0)        # capped bonus when strike clears / stock near the long high
 CC_NEAR_HIGH  = _cc.get('near_high_pct', 0.03)         # "stock near its long high" tolerance
 CC_TOP_N      = int(_cc.get('top_n', 3))               # suggestions shown per held stock
+CC_RESPECT_COVER = _cc.get('respect_coverage', True)   # don't suggest more calls than uncovered lots
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+def _md(s):
+    """ISO date 'YYYY-MM-DD' -> compact 'M/D'; pass through anything else."""
+    s = str(s)
+    if len(s) >= 10 and s[4] == '-' and s[7] == '-':
+        try:
+            return f"{int(s[5:7])}/{int(s[8:10])}"
+        except ValueError:
+            return s
+    return s
 
 
 def get_current_option_price(ticker: str, expiry_yyyymmdd: str,
@@ -171,14 +183,15 @@ def build_covered_calls(holdings, iv_hist_df):
     No gates — every eligible call is scored and surfaced. Returns a scored DataFrame."""
     today = date.today()
     rows = []
-    for tkr, shares in holdings.items():
-        lots = int(shares // 100)
+    for tkr, lots, basis in holdings:
         if lots < 1:
             continue
         yf_t = yf.Ticker(tkr)
         price = S.get_price(yf_t)
         if not price or price <= 0:
+            print(f"  CC {tkr} ({basis}): no price from yfinance — skipped")
             continue
+        start, n_otm, n_exp = len(rows), 0, 0
         hist = S.get_price_history(yf_t)
         hv = S.compute_hv(hist) if hist is not None else None
         iv_rank, iv_src, _, _ = S.ticker_iv_rank(iv_hist_df, tkr)
@@ -213,6 +226,7 @@ def build_covered_calls(holdings, iv_hist_df):
                 continue
             if calls is None or len(calls) == 0:
                 continue
+            n_exp += 1
             for _, r in calls.iterrows():
                 strike = float(r['strike'])
                 if strike <= price:                       # OTM calls only
@@ -225,13 +239,16 @@ def build_covered_calls(holdings, iv_hist_df):
                 if iv <= 0:
                     continue
                 delta = _call_delta(price, strike, T, iv)
-                if delta is None or not (CC_DELTA_MIN <= delta <= CC_DELTA_MAX):
+                if delta is None:
+                    continue
+                n_otm += 1                                 # OTM call we could price + delta
+                if not (CC_DELTA_MIN <= delta <= CC_DELTA_MAX):
                     continue
                 ann_ret = (mid / price) / dte * 365 * 100        # premium yield on the shares, annualized
                 iv_hv = (iv / hv) if (hv and hv > 0) else None
                 rc = ((strike - resist_near) / price) if resist_near else ((strike - price) / price)
                 rows.append({
-                    'ticker': tkr, 'shares': int(shares), 'lots': lots,
+                    'ticker': tkr, 'basis': basis, 'lots': lots,
                     'stock_price': round(price, 2),
                     'expiry': exp_date.strftime('%Y-%m-%d'), 'dte': dte,
                     'earnings': str(earnings) if earnings else None,
@@ -251,6 +268,10 @@ def build_covered_calls(holdings, iv_hist_df):
                     '_ivr': iv_rank if iv_rank is not None else 0.0, '_rc': rc,
                     '_long_high': long_high, '_price': price, '_strike': strike,
                 })
+        print(f"  CC {tkr} ({basis}, {lots} lots, ${price:.0f}): "
+              f"{len(rows) - start} in {CC_DELTA_MIN:.2f}-{CC_DELTA_MAX:.2f}Δ band "
+              f"(of {n_otm} priced OTM calls across {n_exp} expiries in "
+              f"{S.MIN_DTE}-{S.MAX_DTE} DTE)")
     df = pd.DataFrame(rows)
     if df.empty:
         return df
@@ -281,21 +302,25 @@ def build_covered_calls(holdings, iv_hist_df):
 def print_covered_calls(df):
     """Render covered-call suggestions (top CC_TOP_N per held stock) and save covered_calls.csv."""
     if df is None or df.empty:
-        print("\nNo covered-call suggestions (no eligible share lots, or no calls in the delta band).")
+        print("\nNo call-write suggestions (no eligible holdings, or no calls in the delta band).")
         return
     print("\n" + "=" * 100)
-    print(f"COVERED-CALL SUGGESTIONS  (shares you hold; OTM {CC_DELTA_MIN:.2f}-{CC_DELTA_MAX:.2f}Δ; "
-          f"score = {CC_W_OPTION:.0%} option-edge + {CC_W_RESIST:.0%} resistance, +bonus near 3-mo high)")
+    print(f"CALL-WRITE SUGGESTIONS  (covered calls on shares; roll-ups/spreads vs long calls; "
+          f"OTM {CC_DELTA_MIN:.2f}-{CC_DELTA_MAX:.2f}Δ; "
+          f"{CC_W_OPTION:.0%} option-edge + {CC_W_RESIST:.0%} resistance + 3-mo-high bonus)")
     print("=" * 100)
-    cols = ['ticker', 'lots', 'stock_price', 'expiry', 'dte', 'earnings', 'strike', 'otm_%',
-            'mid', 'delta', 'iv_rank', 'iv_hv', 'ann_ret_pct', 'income', 'resist_cushion_%',
-            'high_3m', 'strike_vs_3mhigh_%', 'score_option', 'score_resist', 'long_bonus', 'score']
+    cols = ['ticker', 'basis', 'lots', 'stock_price', 'expiry', 'dte', 'earnings', 'strike',
+            'otm_%', 'mid', 'delta', 'iv_rank', 'iv_hv', 'ann_ret_pct', 'income',
+            'resist_cushion_%', 'high_3m', 'strike_vs_3mhigh_%', 'score']
     top = (df.sort_values('score', ascending=False)
              .groupby('ticker', as_index=False).head(CC_TOP_N)
              .sort_values(['ticker', 'score'], ascending=[True, False]))
-    show = [c for c in cols if c in top.columns]
-    print(top[show].to_string(index=False))
-    top.to_csv('covered_calls.csv', index=False)
+    top.to_csv('covered_calls.csv', index=False)         # CSV keeps ISO dates
+    disp = top.copy()
+    if 'earnings' in disp.columns:
+        disp['earnings'] = disp['earnings'].map(_md)      # console shows M/D
+    show = [c for c in cols if c in disp.columns]
+    print(disp[show].to_string(index=False))
     print("\nSaved → covered_calls.csv")
 
 
@@ -330,21 +355,42 @@ def main():
         if p.contract.secType == 'OPT'
     ]
 
-    # Shares you hold (e.g. from assignment) → covered-call suggestions later
-    stock_holdings = {}
+    # Underlyings to write calls against, NET of calls you've already sold:
+    #   writable lots = shares/100 + long calls − short calls already written
+    #   (so a fully-covered name like 200sh + 2 short calls nets to 0 → skipped)
+    share_lots, long_call_lots, short_call_lots = {}, {}, {}
     for p in positions:
-        if p.contract.secType == 'STK' and p.position >= 100:
-            stock_holdings[p.contract.symbol] = (
-                stock_holdings.get(p.contract.symbol, 0) + int(p.position))
+        sym, pos = p.contract.symbol, int(p.position)
+        if p.contract.secType == 'STK' and pos >= 100:
+            share_lots[sym] = share_lots.get(sym, 0) + pos // 100
+        elif p.contract.secType == 'OPT' and p.contract.right == 'C':
+            if pos > 0:
+                long_call_lots[sym] = long_call_lots.get(sym, 0) + pos
+            elif pos < 0:
+                short_call_lots[sym] = short_call_lots.get(sym, 0) + (-pos)
+    call_holdings, covered = [], []
+    for sym in sorted(set(share_lots) | set(long_call_lots)):
+        gross = share_lots.get(sym, 0) + long_call_lots.get(sym, 0)
+        avail = gross - (short_call_lots.get(sym, 0) if CC_RESPECT_COVER else 0)
+        basis = 'shares' if share_lots.get(sym, 0) > 0 else 'long call'
+        if avail >= 1:
+            call_holdings.append((sym, avail, basis))
+        elif gross >= 1:
+            covered.append(f"{sym}({gross}/{gross} written)")
     iv_hist_df = S.load_iv_history()
+    lots_label = "uncovered lots" if CC_RESPECT_COVER else "all lots, coverage ignored"
+    print(f"\nCall-write candidates ({lots_label}): "
+          f"{[(t, n, b) for t, n, b in call_holdings] or 'none'}")
+    if covered:
+        print(f"Fully covered (skipped — already written): {', '.join(covered)}")
 
-    if not all_opts and not stock_holdings:
+    if not all_opts and not call_holdings:
         print("\nNo open option or stock positions found.")
         return
 
     if not all_opts:
-        print("\nNo open option positions. Proceeding to covered-call suggestions for held shares.")
-        print_covered_calls(build_covered_calls(stock_holdings, iv_hist_df))
+        print("\nNo open option positions. Showing call-write suggestions for your holdings.")
+        print_covered_calls(build_covered_calls(call_holdings, iv_hist_df))
         return
 
     print(f"\n{len(all_opts)} option position(s) found.\n")
@@ -483,7 +529,10 @@ def main():
     print(f"Exit rules: {int(PROFIT_TARGET_PCT * 100)}% profit (short legs)  or  ≤{HARD_CLOSE_DTE} DTE")
     print("Combo: legs sharing ticker+expiry are grouped — any trigger closes all legs")
     print("=" * 90)
-    print(df.to_string(index=False))
+    _disp = df.copy()
+    if 'earnings' in _disp.columns:
+        _disp['earnings'] = _disp['earnings'].map(_md)
+    print(_disp.to_string(index=False))
 
     close_ct = (df['action'].str.startswith('CLOSE')).sum()
     roll_ct  = (df['action'] == 'ROLL?').sum()
@@ -507,9 +556,9 @@ def main():
     rolls = build_roll_suggestions(df, iv_hist_df, holdings_returns)
     print_roll_suggestions(rolls)
 
-    # ── Covered-call suggestions for shares you hold (e.g. from assignment) ────
-    if stock_holdings:
-        print_covered_calls(build_covered_calls(stock_holdings, iv_hist_df))
+    # ── Call-write suggestions (covered calls on shares; roll-ups vs long calls) ──
+    if call_holdings:
+        print_covered_calls(build_covered_calls(call_holdings, iv_hist_df))
 
 
 if __name__ == '__main__':

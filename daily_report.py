@@ -50,6 +50,17 @@ def _path(name):
     return os.path.join(_DIR, name)
 
 
+def _md(s):
+    """ISO 'YYYY-MM-DD' -> compact 'M/D'; pass anything else through."""
+    s = str(s)
+    if len(s) >= 10 and s[4] == '-' and s[7] == '-':
+        try:
+            return f"{int(s[5:7])}/{int(s[8:10])}"
+        except ValueError:
+            return s
+    return s
+
+
 def fmt_monitor():
     """Positions needing action (CLOSE / ROLL?) + total exposure line, if monitor ran."""
     f = _path('monitor_output.csv')
@@ -64,13 +75,20 @@ def fmt_monitor():
     act = df[df['action'].astype(str).str.startswith(('CLOSE', 'ROLL'))]
     if act.empty:
         return "<b>MONITOR</b> — no positions need action."
-    cols = [c for c in ['ticker', 'type', 'strike', 'dte', 'earnings', 'money', 'pnl_%',
-                        'exposure', 'action']
-            if c in act.columns]
-    out = "<b>MONITOR — action needed</b>\n" + notify.mono(act[cols].to_string(index=False))
+    lines = []
+    for _, x in act.iterrows():
+        a = 'CLOSE' if str(x['action']).startswith('CLOSE') else 'ROLL'
+        pnl = x.get('pnl_%')
+        pnl_s = f"{pnl:+.0f}%" if pd.notna(pnl) else "—"
+        money = str(x['money']) if pd.notna(x.get('money')) else ''
+        e = x.get('earnings')
+        e_s = f" E{_md(e)}" if pd.notna(e) and str(e) not in ('', 'nan') else ""
+        lines.append(f"{x['ticker']} {x['strike']:g}{x['type']} {int(x['dte'])}d "
+                     f"{money} {pnl_s} {a}{e_s}")
+    out = "<b>MONITOR — action</b>\n" + notify.mono("\n".join(lines))
     if 'exposure' in df.columns:
         tot = int(pd.to_numeric(df['exposure'], errors='coerce').dropna().sum())
-        out += f"\nShort-put exposure (max loss at stop): ${tot:,}"
+        out += f"\nExposure (max loss at stop): ${tot:,}"
     return out
 
 
@@ -85,14 +103,23 @@ def fmt_rolls():
         return ''
     if df.empty:
         return ''
-    sort_keys = [k for k in ['roll_dte'] if k in df.columns] or ['score']
-    best = (df.sort_values('score', ascending=False)
-              .groupby('pos_ticker', as_index=False).head(3)
-              .sort_values(['pos_ticker'] + sort_keys))
-    cols = [c for c in ['pos_ticker', 'pos_strike', 'roll_expiry', 'roll_dte', 'roll_strike',
-                        'net_credit', 'score'] if c in best.columns]
-    return ("<b>ROLLS per position</b>  <i>several DTEs</i>\n"
-            + notify.mono(best[cols].to_string(index=False)))
+    keep = (df.sort_values('score', ascending=False)
+              .groupby('pos_ticker', as_index=False).head(3))
+    sort_k = 'roll_dte' if 'roll_dte' in keep.columns else 'score'
+    out = ["<b>ROLLS</b>  <i>several DTEs</i>"]
+    for tkr in keep['pos_ticker'].drop_duplicates():
+        sub = keep[keep['pos_ticker'] == tkr].sort_values(sort_k)
+        r0 = sub.iloc[0]
+        ps = r0.get('pos_strike')
+        pdte = r0.get('pos_dte')
+        hdr = f"<b>{tkr}</b> {ps:g}P {int(pdte)}d → roll" if pd.notna(ps) and pd.notna(pdte) else f"<b>{tkr}</b> → roll"
+        lines = []
+        for _, r in sub.iterrows():
+            cr = r.get('net_credit')
+            cr_s = f"+{cr:.2f}" if pd.notna(cr) else "—"
+            lines.append(f"{int(r['roll_dte'])}d {r['roll_strike']:g}P {cr_s} s{r['score']:.0f}")
+        out.append(hdr + "\n" + notify.mono("\n".join(lines)))
+    return "\n\n".join(out)
 
 
 def fmt_screener():
@@ -117,8 +144,8 @@ def fmt_screener():
         ivr = r0.get('iv_rank')
         ivr_s = f"IVR{ivr:.0f}" if pd.notna(ivr) else ""
         earn = r0.get('earnings')
-        earn_s = f" · E:{str(earn)[5:]}" if pd.notna(earn) and str(earn) not in ('', 'nan') else ""
-        hdr = f"<b>{tkr}</b> · {sleeve} · {ivr_s} · ★{r0['score']:.0f}{earn_s}"
+        earn_s = f" E{_md(earn)}" if pd.notna(earn) and str(earn) not in ('', 'nan') else ""
+        hdr = f"<b>{tkr}</b> {_ab(sleeve)} {ivr_s} ★{r0['score']:.0f}{earn_s}"
         lines = []
         for _, x in sub.iterrows():
             d = abs(x['delta']) if pd.notna(x.get('delta')) else 0
@@ -155,17 +182,17 @@ def fmt_covered_calls():
         return ''
     if df.empty:
         return ''
-    out = ["<b>COVERED CALLS</b> — shares you hold"]
+    out = ["<b>CALL WRITES</b> — shares &amp; long calls"]
     for tkr in df.drop_duplicates('ticker')['ticker']:
         sub = df[df['ticker'] == tkr].sort_values('score', ascending=False).head(PER_TICKER)
         r0 = sub.iloc[0]
         ivr = r0.get('iv_rank')
         ivr_s = f"IVR{ivr:.0f}" if pd.notna(ivr) else ""
+        basis = str(r0.get('basis')) if pd.notna(r0.get('basis')) else ''
+        b_s = 'sh' if basis == 'shares' else ('call' if basis == 'long call' else basis)
         earn = r0.get('earnings')
-        earn_s = f" · E:{str(earn)[5:]}" if pd.notna(earn) and str(earn) not in ('', 'nan') else ""
-        h3 = r0.get('high_3m')
-        h3_s = f" · 3mH {h3:g}" if pd.notna(h3) else ""
-        hdr = f"<b>{tkr}</b> · {ivr_s} · ★{r0['score']:.0f}{h3_s}{earn_s}"
+        earn_s = f" E{_md(earn)}" if pd.notna(earn) and str(earn) not in ('', 'nan') else ""
+        hdr = f"<b>{tkr}</b> {b_s} {ivr_s} ★{r0['score']:.0f}{earn_s}"
         lines = []
         for _, x in sub.iterrows():
             d = abs(x['delta']) if pd.notna(x.get('delta')) else 0

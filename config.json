@@ -20,7 +20,7 @@
 
   "covered_calls": { "delta_min": 0.15, "delta_max": 0.25, "w_option": 0.6, "w_resist": 0.4,
                      "resist_window": 20, "long_high_days": 63, "long_high_bonus": 6.0,
-                     "near_high_pct": 0.03, "top_n": 3 },
+                     "near_high_pct": 0.03, "top_n": 3, "respect_coverage": false },
 
   "stops":    { "basis": "underlying", "drop": 0.07, "credit_mult": 2.5 }
 }

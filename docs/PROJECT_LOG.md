@@ -825,3 +825,41 @@ Docs updated: TECHNICAL_DOC §5 (regime + oversold) and §12 (config.json). Word
 - [ ] Extend rolls/stops to calls + combos; performance pass; Phase 2 VM
 
 ---
+
+## Entry 021 — 2026-06-14
+
+### Telegram report polish, docs v2, regime redesign, covered calls, earnings, roll variety
+
+**Telegram "Best per sleeve" compacted.** Sleeve names were eating the line, so added a `SLEEVE_ABBR` map (5–6 letter codes, e.g. Equity Index→`EQIDX`, Financial Services→`FINSVC`) in `daily_report.py`, and added Δ and annualized yield to each sleeve line (delta shown without leading zero to save width). Lines land ~32–34 chars; legend documented.
+
+**Command reference in the manual.** Added §13.2a to `TECHNICAL_DOC.md`: a table of every script with the exact `venv\Scripts\python.exe …` command, whether it needs IB Gateway, and what it writes.
+
+**Word guide v2 (`Options_System_Guide_v2.docx`).** User added 9 inline comments; mount served a corrupted/stale copy so the user re-uploaded the file. Addressed all 9: (1) §1 bullets relabeled to module names (Screener/Monitor/Stops with file names); (3) §2 now frames the wheel and notes the covered-call leg isn't built yet; (7) merged §3+§4 into one volatility section (3.1 IV vs HV, 3.2 IV Rank vs IV/HV); (10) "Quality" gate → "Fundamentals"; (21/22) monitor actions now spell out roll-vs-close and assign-vs-roll alternatives; (32) "Where the details live" moved before the Glossary. Also consolidated the glossary into one section (output columns incl. `open_int`/`iv_src`/`spread_pct`, command reference, terms, sleeve abbreviations), stripped the comments, and renumbered. (docx edited via python-docx: dup style names → reuse style objects; no `Table Grid` → manual XML borders.)
+
+**Regime gate redesigned → `breakdown` (steepness/vol, not price level).** User reframed the "falling knife" purpose: it's about the **steepness of the move**, not being at a low. Removed the old 200-MA-falling + new-6-month-low logic. New `regime_block` (`mode:"breakdown"`) skips a name only on an ACTIVE sharp move: **steep drop** (peak→now fall ≥ `drop_pct` 15% over `drop_window` 10d) **OR vol spike** (`vol_fast` 10d realized vol ≥ `vol_ratio` 1.8× `vol_slow` 63d baseline AND ≥ `vol_abs` 50%). Added `dd_fast`/`hv_fast`/`hv_slow`/`vol_ratio` to `compute_technicals`. A stock that ground down to a low but is now calm now PASSES. Legacy `gate` (price<200-MA) still selectable; `DOWNTREND_SLOPE`/`NEW_LOW_TOL`/`swing_low_126` remain defined but unused. Tested on synthetic series (steep drop & vol spike blocked; based-at-low passes). config `regime` section rewritten.
+
+**IV history — already backfilled.** User asked to backfill for the near-zero IV Rank. Found `update_iv_history.py` already pulls a **full year** (`durationStr='1 Y'`); `data/iv_history.csv` has 27,108 IBKR rows (~251/ticker) current to today. So IV Rank already uses a complete year — the low reading is genuine (vol mean-reverted post-pullback). Offered (not yet built) an IV/HV + shorter-HV representativeness tweak.
+
+**Covered-call suggestions (`monitor.py`).** New `build_covered_calls`/`print_covered_calls`: for held shares (≥100), scores OTM calls in 0.15–0.25Δ (conservative, user's pick). Score = `w_option` 0.6 × option-edge (IV rank, IV/HV, ann. premium, percentile-ranked across pool) + `w_resist` 0.4 × resistance cushion (strike above 20-day upper Bollinger / swing high) + a small capped bonus (`long_high_bonus` 6) that fires only when the strike clears the ~3-month high and/or the stock is near it. Decision: primary resistance = 20-day (binds over the option life); the 3–6 month high is a **weak conditional bonus + always-visualized columns** (`high_3m`, `strike_vs_3mhigh_%`) — avoids flooding with uninformative long-horizon signals. No gates. Writes `covered_calls.csv`. Validated scoring + call-delta on synthetic data.
+
+**Earnings dates.** `earnings` column added to `screener_output` (from existing `get_next_earnings`) and `monitor_output` (per-ticker lookup); shown in console tables and appended to Telegram headers as `E:MM-DD`.
+
+**Roll suggestions → DTE variety.** `build_roll_suggestions` was top-3-by-score (clustered in one expiry, e.g. all META same DTE). Now: best strike **per expiry**, then nearest N expiries → several different DTEs to compare. `daily_report` roll block shows up to 3 with `roll_dte`.
+
+**daily_report decoupling (clarified for user).** `daily_report.py` reads CSVs only; each `fmt_*` skips if its file is absent. So monitor isn't a hard dependency — it enriches the report when `monitor.py` has run (PC + Gateway). Cloud run stays screener-only. Caveat noted: CSVs persist, so a failed monitor run could surface stale positions (offered a "skip stale monitor" guard).
+
+**config.json:** new `covered_calls` block; `regime` rewritten to breakdown params.
+
+### Progress
+- [x] Sleeve abbreviations + Δ/yield in Telegram; command reference in TECHNICAL_DOC §13.2a
+- [x] Word guide v2: 9 comments addressed, glossary consolidated, comments stripped, renumbered
+- [x] Regime gate → breakdown (steep drop OR vol spike); config + tests
+- [x] Confirmed IV history fully backfilled (full-year IBKR in data/iv_history.csv)
+- [x] Covered-call suggestions (option-edge + resistance + capped 3-mo bonus, 0.15–0.25Δ)
+- [x] Earnings column (screener + monitor + Telegram); roll DTE variety
+- [x] daily_report wired for covered calls + earnings + richer rolls
+- [ ] User: TEST outputs on PC (monitor → daily_report with Gateway); then commit + push screener.py/monitor.py/daily_report.py/config.json
+- [ ] Pending offers: update guide (§11.1 + covered-call subsection); IV/HV representativeness tweak (shorter HV); skip-stale-monitor guard
+- [ ] Extend rolls/stops to calls + combos; performance pass; Phase 2 VM
+
+---
