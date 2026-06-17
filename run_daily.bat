@@ -26,5 +26,5 @@ echo ================================================================
 echo  %~1
 echo  [%date% %time%]  running %~2 ...
 echo ================================================================
-powershell -NoProfile -Command "& '.\venv\Scripts\python.exe' -u %~2 2>&1 | Tee-Object -FilePath '%LOG%' -Append"
+powershell -NoProfile -Command "$ErrorActionPreference='Continue'; & '.\venv\Scripts\python.exe' -u %~2 2>&1 | ForEach-Object { [string]$_ } | Tee-Object -FilePath '%LOG%' -Append"
 goto :eof

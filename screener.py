@@ -15,6 +15,7 @@ sizer recommends lots under a per-trade risk cap.
 
 import os
 import sys
+import logging
 import warnings
 from collections import Counter
 from datetime import date
@@ -26,6 +27,10 @@ from scipy.optimize import brentq
 from scipy.stats import norm
 
 warnings.filterwarnings('ignore')
+# Quiet yfinance's own "possibly delisted / 404 no fundamentals" chatter (ETFs/indices,
+# expected). Process-wide, so monitor.py (which imports this) inherits it too.
+for _name in ('yfinance', 'yfinance.utils', 'yfinance.data', 'peewee'):
+    logging.getLogger(_name).setLevel(logging.CRITICAL)
 
 # Force UTF-8 console/log output so non-cp932 chars (—, ★, →, Δ) don't crash on a
 # Japanese (cp932) Windows console. Applies process-wide; importers inherit it.

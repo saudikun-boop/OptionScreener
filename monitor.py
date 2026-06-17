@@ -89,9 +89,12 @@ def get_current_option_price(ticker: str, expiry_yyyymmdd: str,
         return None
 
 
+_YF_INDEX = {'VIX': '^VIX', 'SPX': '^SPX', 'NDX': '^NDX', 'RUT': '^RUT'}  # cash-index symbols
+
+
 def get_stock_price(ticker):
     try:
-        return S.get_price(yf.Ticker(ticker))
+        return S.get_price(yf.Ticker(_YF_INDEX.get(ticker, ticker)))
     except Exception:
         return None
 
