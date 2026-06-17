@@ -12,7 +12,7 @@
 
   "oversold": { "z_threshold": -2.5, "bonus": 8.0 },
 
-  "report":   { "top_tickers": 5, "per_ticker": 3, "attach_csv": true },
+  "report":   { "top_tickers": 10, "per_ticker": 3, "attach_csv": true },
 
   "sizing":   { "account_size_fallback": 700000, "max_risk_pct": 0.03, "assumed_drawdown": 0.15 },
 
