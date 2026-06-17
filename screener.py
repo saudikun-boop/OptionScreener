@@ -50,9 +50,28 @@ SP100 = [
     'RTX', 'SBUX', 'SCHW', 'SO', 'SPG', 'T', 'TGT', 'TMO', 'TMUS', 'TSLA',
     'TXN', 'UBER', 'UNH', 'UNP', 'UPS', 'USB', 'V', 'VZ', 'WFC', 'WMT', 'XOM',
 ]
+# Dow Jones + Nasdaq-100 members NOT already in the S&P 100 (as of 2025-09; review
+# periodically). All large, liquid, heavily-optioned names — keeps quality high while
+# widening the net. Trim this list if runs get slow / the cloud job nears its time cap.
+EXTRA = [
+    # Semiconductors
+    'MU', 'ADI', 'KLAC', 'LRCX', 'NXPI', 'MCHP', 'MRVL', 'ARM',
+    # Software / security / internet
+    'PANW', 'CRWD', 'SNPS', 'CDNS', 'FTNT', 'ADSK', 'WDAY', 'DDOG', 'TEAM', 'MDB',
+    'ZS', 'APP', 'ABNB',
+    # Consumer / retail / staples
+    'LULU', 'ROST', 'ORLY', 'MNST', 'KDP', 'KHC', 'MAR',
+    # Health care
+    'VRTX', 'REGN', 'IDXX', 'DXCM', 'GEHC', 'BIIB',
+    # Industrials / transport / materials
+    'PCAR', 'CPRT', 'CTAS', 'PAYX', 'ODFL', 'FAST', 'ROP', 'CSX', 'TRV', 'SHW',
+    # Utilities (low IV but add a diversification sleeve)
+    'CEG', 'AEP', 'EXC', 'XEL',
+]
 # Cross-asset ETFs (bypass the fundamentals/earnings gates).
 ETFS = ['SPY', 'QQQ', 'IWM', 'TLT', 'IEF', 'HYG', 'GLD', 'SLV', 'VNQ']
-TICKERS = SP100 + ETFS
+EQUITIES = sorted(set(SP100) | set(EXTRA))     # deduped union
+TICKERS = EQUITIES + ETFS
 ETF_TICKERS = {'SPY', 'QQQ', 'IWM', 'DIA', 'TLT', 'IEF', 'SHY', 'LQD', 'HYG', 'AGG',
                'GLD', 'SLV', 'DBC', 'USO', 'VNQ', 'IYR', 'EEM', 'EFA', 'XLE', 'XLF'}
 

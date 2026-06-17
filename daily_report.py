@@ -141,27 +141,24 @@ def fmt_screener():
     if df.empty:
         return "<b>SCREENER</b> — no candidates passed the gates."
     df = df.sort_values('score', ascending=False)
-    # Top tickers by best score (variety), then top contracts within each
+    # Top tickers by best score (variety), then top contracts within each — one compact block
     order = (df.groupby('ticker')['score'].max()
                .sort_values(ascending=False).head(TOP_TICKERS).index.tolist())
-    out = [f"<b>SCREENER</b> — {len(df)} candidates · top {len(order)} names"]
-    for tkr in order:
-        sub = df[df['ticker'] == tkr].sort_values('score', ascending=False).head(PER_TICKER)
-        r0 = sub.iloc[0]
-        sleeve = str(r0['sleeve']) if ('sleeve' in sub.columns and pd.notna(r0.get('sleeve'))) else ''
-        ivr = r0.get('iv_rank')
-        ivr_s = f"IVR{ivr:.0f}" if pd.notna(ivr) else ""
-        earn = r0.get('earnings')
-        earn_s = f" E{_md(earn)}" if pd.notna(earn) and str(earn) not in ('', 'nan') else ""
-        hdr = f"<b>{tkr}</b> {_ab(sleeve)} {ivr_s} ★{r0['score']:.0f}{earn_s}"
-        lines = []
-        for _, x in sub.iterrows():
-            d = abs(x['delta']) if pd.notna(x.get('delta')) else 0
-            ann = x.get('ann_ret_pct')
-            ann_s = f"{ann:.0f}%/y" if pd.notna(ann) else "—"
-            lines.append(f"{x['strike']:g}P ${x['mid']:.2f} {int(x['dte'])}d "
-                         f"Δ{d:.2f} {ann_s} s{x['score']:.0f}")
-        out.append(hdr + "\n" + notify.mono("\n".join(lines)))
+    sub = (df[df['ticker'].isin(order)].sort_values('score', ascending=False)
+             .groupby('ticker', as_index=False).head(PER_TICKER)
+             .sort_values(['ticker', 'score'], ascending=[True, False]))
+    lines = []
+    for _, x in sub.iterrows():
+        d = abs(x['delta']) if pd.notna(x.get('delta')) else 0
+        d_s = ("%.2f" % d).lstrip("0") or "0"
+        ann = x.get('ann_ret_pct')
+        ann_s = f"{ann:.0f}%" if pd.notna(ann) else "—"
+        e = x.get('earnings')
+        e_s = f" E{_md(e)}" if pd.notna(e) and str(e) not in ('', 'nan') else ""
+        lines.append(f"{str(x['ticker']):<5} {x['strike']:g}P {int(x['dte'])}d "
+                     f"Δ{d_s} {ann_s} s{x['score']:.0f}{e_s}")
+    out = [f"<b>SCREENER</b> — {len(df)} candidates · top {len(order)} names\n"
+           + notify.mono("\n".join(lines))]
     if 'sleeve' in df.columns:                       # diversification menu (one per sleeve)
         book = (df.groupby('sleeve', as_index=False).head(1)
                   .sort_values('score', ascending=False))
@@ -208,23 +205,37 @@ def fmt_covered_calls():
 
 
 def build_workbook():
-    """Combine the run's CSVs into one multi-tab .xlsx. Returns the path, or None."""
+    """Combine the run's CSVs into one multi-tab .xlsx. Returns the path, or None.
+    Prints a clear reason on any failure so the log shows why it fell back to CSV."""
     sheets = [('screener_output.csv', 'Screener'), ('monitor_output.csv', 'Monitor'),
               ('roll_suggestions.csv', 'Rolls'), ('covered_calls.csv', 'CallWrites')]
     present = [(f, n) for f, n in sheets if os.path.exists(_path(f))]
     if not present:
+        print("Workbook: no CSVs present to combine.")
         return None
-    out = _path('daily_report.xlsx')
+    try:
+        import openpyxl  # noqa: F401  (explicit so a missing dep is obvious)
+    except Exception as e:
+        print("Workbook: openpyxl not importable —", e)
+        return None
+    # Dated filename so an .xlsx left open on a device can't lock today's write.
+    out = _path(f"daily_report_{date.today()}.xlsx")
+    wrote = 0
     try:
         with pd.ExcelWriter(out, engine='openpyxl') as xw:
             for f, n in present:
                 try:
                     pd.read_csv(_path(f)).to_excel(xw, sheet_name=n, index=False)
-                except Exception:
-                    pass
+                    wrote += 1
+                except Exception as e:
+                    print(f"Workbook: sheet {n} skipped — {e}")
+            if wrote == 0:                                  # never save an empty workbook
+                pd.DataFrame({'note': ['no rows in any section']}).to_excel(
+                    xw, sheet_name='Empty', index=False)
+        print(f"Workbook built: {os.path.basename(out)} ({wrote} sheet(s))")
         return out
     except Exception as e:
-        print("Workbook build skipped (need openpyxl?):", e)
+        print("Workbook build FAILED —", repr(e))
         return None
 
 

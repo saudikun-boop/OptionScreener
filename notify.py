@@ -92,7 +92,7 @@ def send_document(path, caption='', token=None, chat=None):
             r = requests.post(
                 _DOC.format(token=token),
                 data={'chat_id': chat, 'caption': caption[:1024], 'parse_mode': 'HTML'},
-                files={'document': (os.path.basename(path), fh, 'text/csv')},
+                files={'document': (os.path.basename(path), fh, 'application/octet-stream')},
                 timeout=60)
         if r.status_code != 200:
             print("Telegram doc error:", r.status_code, r.text[:300])
