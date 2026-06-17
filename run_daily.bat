@@ -1,24 +1,31 @@
 @echo off
+setlocal
 REM Daily full run: monitor (needs IB Gateway up) -> screener -> Telegram report.
-REM Output (incl. call-write detection / coverage diagnostics) is saved to logs\daily.log
-REM and also echoed to the console. Schedule with Windows Task Scheduler, e.g.:
+REM Each step prints a live banner and streams its output to the console AND logs\daily.log
+REM (via PowerShell Tee-Object). Schedule with Windows Task Scheduler, e.g.:
 REM   schtasks /Create /TN "OptionsDailyReport" /TR "C:\ibkr_screener\run_daily.bat" /SC DAILY /ST 08:00
 cd /d C:\ibkr_screener
 if not exist logs mkdir logs
 set "LOG=logs\daily.log"
+type nul > "%LOG%"
 
-echo [%date% %time%] START > "%LOG%"
+call :run "[1/3] MONITOR   positions, rolls, call-writes  (needs IB Gateway)" monitor.py
+call :run "[2/3] SCREENER  ranked put candidates (~158 tickers - may take a few min)" screener.py
+call :run "[3/3] REPORT    Telegram digest + Excel attachment" daily_report.py
 
-echo [%date% %time%] monitor.py        (positions, rolls, call-writes - needs IB Gateway) >> "%LOG%"
-venv\Scripts\python.exe monitor.py        >> "%LOG%" 2>&1
+echo(
+echo ================================================================
+echo  [%date% %time%]  ALL STEPS COMPLETE   full log: %LOG%
+echo ================================================================
+endlocal
+goto :eof
 
-echo [%date% %time%] screener.py       (ranked put candidates) >> "%LOG%"
-venv\Scripts\python.exe screener.py       >> "%LOG%" 2>&1
-
-echo [%date% %time%] daily_report.py   (Telegram digest + CSV attachments) >> "%LOG%"
-venv\Scripts\python.exe daily_report.py   >> "%LOG%" 2>&1
-
-echo [%date% %time%] DONE >> "%LOG%"
-
-REM Show this run's log on the console when run interactively
-type "%LOG%"
+:run
+echo(
+echo ================================================================
+echo  %~1
+echo  [%date% %time%]  running %~2 ...
+echo ================================================================
+echo [%date% %time%] %~2 >> "%LOG%"
+venv\Scripts\python.exe %~2 2>&1 | powershell -NoProfile -Command "$input | Tee-Object -FilePath '%LOG%' -Append"
+goto :eof
