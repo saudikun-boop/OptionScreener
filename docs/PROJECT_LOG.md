@@ -942,3 +942,66 @@ diagnostics) to `logs\daily.log` / `logs\weekly.log` and echo to console.
 - [ ] Extend rolls/stops to calls + combos; performance pass; Phase 2 VM
 
 ---
+
+## Entry 022 — 2026-06-17
+
+### Folder reorg (code/ + reports/), Telegram layout fixes, Excel hardening, top-10, JNJ explained
+
+**Universe / display.** `report.top_tickers` 5 → 10.
+
+**JNJ "missing" explained.** Not a quality reject — it passed all gates but produced 0 tradable
+contracts: earnings 2026-07-15 trips the earnings gate on the in-window expiries, and the
+remaining near strikes were rejected for wide spread (>10%), low OI (<100), and delta band. Found
+via the per-ticker reject counter now captured in `logs/daily.log`. It returns post-earnings.
+
+**yfinance noise + batch stderr.** Silenced yfinance's own logging (`logging.getLogger('yfinance')`
+→ CRITICAL in screener, inherited by monitor) so "$VIX possibly delisted / 404 no fundamentals
+(QQQ/VIX)" stops printing. Mapped index symbols in `monitor.get_stock_price` (`VIX→^VIX`, etc.).
+Batch PowerShell now sets `$ErrorActionPreference='Continue'` and pipes through
+`ForEach-Object { [string]$_ }`, so native stderr no longer renders as red `NativeCommandError`.
+
+**Live batch progress.** The first tee approach (`cmd | powershell "$input | Tee-Object"`) buffered
+everything → console looked frozen. Fixed to pipe *inside* PowerShell + run Python `-u`
+(unbuffered) → output now streams ticker-by-ticker, with a per-step banner.
+
+**Excel attachment hardened.** `build_workbook` now: explicit `openpyxl` import, per-sheet error
+print, never saves an empty workbook, and uses a **dated filename** (`daily_report_YYYY-MM-DD.xlsx`)
+to dodge file locks. Added a **single combined-CSV fallback** (`daily_report.csv` with a `section`
+column) so you never get four separate CSVs again. `openpyxl` added to requirements; `send_document`
+MIME → octet-stream. Confirmed working in the log (`Workbook built … 4 sheets / Attached`).
+
+**Call-write asterisk.** `cc_open` flag marks names where a short call is already open (e.g. `MSFT*`),
+shown in console + Telegram with a `* = call already open` legend.
+
+**Telegram screener/rolls layout.** Root cause of the "red screener" pinned down: the long message
+was being **chunk-split through the middle of the screener `<pre>`** (best-per-sleeve landed in an
+intact chunk, so it stayed white). Fixed `notify._chunks` to split on blank-line **section
+boundaries — never cutting a `<pre>`**. Reverted screener + rolls to single aligned monospace
+blocks like the other sections (no 8-line partitions). Rolls render `cur>new strike` across several
+DTEs. (Briefly tried plain text and 8-line sub-blocks before finding the chunk-split cause.)
+
+**FOLDER REORGANIZATION.** Python → `code/`, all generated outputs → `reports/`, `config.json` +
+`telegram_config.json` stay in root, `data/` unchanged. Rewired every path to be **root-anchored**
+(`_ROOT` = parent of `code/`): screener (config/data/holdings + `REPORTS_DIR` + makedirs), monitor
+(3 outputs via `S.REPORTS_DIR`), notify (telegram_config), daily_report (`_ROOT` for config,
+`_REPORTS` for outputs). Updated all four `.bat` files (`code\…`), the GitHub workflow
+(`python code/…`), and `.gitignore` (`reports/`). Moved old test scripts into `code/`, cleared
+stale root CSVs, cleaned `__pycache__`. Verified by importing screener+daily_report+notify (all
+paths resolve correctly, config loads) and compiling the ib_insync scripts. A sandbox `git mv`
+glitched the index (mount) → `git reset` cleaned it; the move is committed from the PC via
+`git add -A`.
+
+**Docs.** TECHNICAL_DOC command paths → `code\`; Word guide **v4** (`Options_System_Guide_v4.docx`,
+v1.4) command examples → `code\` + a project-layout note.
+
+### Progress
+- [x] top 10; JNJ explained (earnings + liquidity gate, not quality)
+- [x] yfinance noise silenced; VIX→^VIX; batch stderr clean; live ticker-by-ticker streaming
+- [x] Excel hardened + single-file (xlsx or combined-csv) attachment; openpyxl in requirements
+- [x] call-write `*` when already open; screener+rolls single aligned blocks; `_chunks` never splits `<pre>`
+- [x] Folder reorg: code/ + reports/, all paths/bats/workflow/gitignore rewired; verified imports/compiles
+- [x] Docs: TECHNICAL_DOC + Word guide v4 command paths + layout note
+- [ ] User: commit reorg from PC (`git add -A`); re-run `run_daily.bat`
+- [ ] Pending: IV/HV shorter-HV representativeness; skip-stale-monitor guard; short-call roll engine; extend rolls/stops to calls+combos; Phase 2 VM
+
+---
