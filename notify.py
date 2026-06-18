@@ -36,15 +36,32 @@ def _creds():
 
 
 def _chunks(text, n=_MAX):
-    """Split on line boundaries so each message stays under Telegram's limit."""
+    """Split into messages <= n chars, preferring blank-line (section) boundaries so a
+    <pre> block is never cut in half (which Telegram renders as broken/colored HTML).
+    Falls back to line-splitting only if a single section is itself too long."""
     buf = ''
-    for ln in text.split('\n'):
-        if len(buf) + len(ln) + 1 > n:
-            if buf:
-                yield buf
-            buf = ln[:n]
-        else:
-            buf = (buf + '\n' + ln) if buf else ln
+    for sec in text.split('\n\n'):
+        cand = sec if not buf else buf + '\n\n' + sec
+        if len(cand) <= n:
+            buf = cand
+            continue
+        if buf:
+            yield buf
+            buf = ''
+        if len(sec) <= n:
+            buf = sec
+            continue
+        line = ''                                   # oversized single section: line-split it
+        for ln in sec.split('\n'):
+            c2 = ln if not line else line + '\n' + ln
+            if len(c2) <= n:
+                line = c2
+            else:
+                if line:
+                    yield line
+                line = ln[:n]
+        if line:
+            buf = line
     if buf:
         yield buf
 
