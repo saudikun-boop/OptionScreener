@@ -113,21 +113,18 @@ def fmt_rolls():
         return ''
     keep = (df.sort_values('score', ascending=False)
               .groupby('pos_ticker', as_index=False).head(3))
-    sort_k = 'roll_dte' if 'roll_dte' in keep.columns else 'score'
-    out = ["<b>ROLLS</b>  <i>several DTEs</i>"]
-    for tkr in keep['pos_ticker'].drop_duplicates():
-        sub = keep[keep['pos_ticker'] == tkr].sort_values(sort_k)
-        r0 = sub.iloc[0]
-        ps = r0.get('pos_strike')
-        pdte = r0.get('pos_dte')
-        hdr = f"<b>{tkr}</b> {ps:g}P {int(pdte)}d → roll" if pd.notna(ps) and pd.notna(pdte) else f"<b>{tkr}</b> → roll"
-        lines = []
-        for _, r in sub.iterrows():
-            cr = r.get('net_credit')
-            cr_s = f"+{cr:.2f}" if pd.notna(cr) else "—"
-            lines.append(f"{int(r['roll_dte'])}d {r['roll_strike']:g}P {cr_s} s{r['score']:.0f}")
-        out.append(hdr + "\n" + notify.mono("\n".join(lines)))
-    return "\n\n".join(out)
+    sort_k = ['pos_ticker'] + (['roll_dte'] if 'roll_dte' in keep.columns else [])
+    keep = keep.sort_values(sort_k)
+    lines = []
+    for _, r in keep.iterrows():
+        cr = r.get('net_credit')
+        cr_s = f"+{cr:.2f}" if pd.notna(cr) else "—"
+        ps = r.get('pos_strike')
+        roll = f"{ps:g}>{r['roll_strike']:g}P" if pd.notna(ps) else f"{r['roll_strike']:g}P"
+        lines.append(f"{str(r['pos_ticker']):<5} {roll} {int(r['roll_dte'])}d {cr_s} s{r['score']:.0f}")
+    # small monospace blocks (like the screener) so Telegram keeps it plain, no big headers
+    blocks = [notify.mono("\n".join(lines[i:i + 8])) for i in range(0, len(lines), 8)]
+    return "<b>ROLLS</b>  <i>cur&gt;new strike · several DTEs</i>\n" + "\n".join(blocks)
 
 
 def fmt_screener():
