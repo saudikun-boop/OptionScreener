@@ -120,11 +120,10 @@ def fmt_rolls():
         cr = r.get('net_credit')
         cr_s = f"+{cr:.2f}" if pd.notna(cr) else "—"
         ps = r.get('pos_strike')
-        roll = f"{ps:g}>{r['roll_strike']:g}P" if pd.notna(ps) else f"{r['roll_strike']:g}P"
-        lines.append(f"{str(r['pos_ticker']):<5} {roll} {int(r['roll_dte'])}d {cr_s} s{r['score']:.0f}")
-    # small monospace blocks (like the screener) so Telegram keeps it plain, no big headers
-    blocks = [notify.mono("\n".join(lines[i:i + 8])) for i in range(0, len(lines), 8)]
-    return "<b>ROLLS</b>  <i>cur&gt;new strike · several DTEs</i>\n" + "\n".join(blocks)
+        roll = f"{ps:g}&gt;{r['roll_strike']:g}P" if pd.notna(ps) else f"{r['roll_strike']:g}P"
+        lines.append(f"{r['pos_ticker']} {roll} {int(r['roll_dte'])}d {cr_s} s{r['score']:.0f}")
+    # Plain text — one clean block, no code-coloring, no partitions.
+    return "<b>ROLLS</b>  <i>cur&gt;new strike · several DTEs</i>\n" + "\n".join(lines)
 
 
 def fmt_screener():
@@ -152,13 +151,11 @@ def fmt_screener():
         ann_s = f"{ann:.0f}%" if pd.notna(ann) else "—"
         e = x.get('earnings')
         e_s = f" E{_md(e)}" if pd.notna(e) and str(e) not in ('', 'nan') else ""
-        lines.append(f"{str(x['ticker']):<5} {x['strike']:g}P {int(x['dte'])}d "
+        lines.append(f"{x['ticker']} {x['strike']:g}P {int(x['dte'])}d "
                      f"Δ{d_s} {ann_s} s{x['score']:.0f}{e_s}")
-    # Emit as small monospace blocks (≤8 lines) so Telegram doesn't treat one big block
-    # as a syntax-highlighted "code" block (which shows up red on some themes).
-    blocks = [notify.mono("\n".join(lines[i:i + 8])) for i in range(0, len(lines), 8)]
+    # Plain text (no <pre>) — one clean block, no Telegram code-coloring, no partitions.
     out = [f"<b>SCREENER</b> — {len(df)} candidates · top {len(order)} names\n"
-           + "\n".join(blocks)]
+           + "\n".join(lines)]
     if 'sleeve' in df.columns:                       # diversification menu (one per sleeve)
         book = (df.groupby('sleeve', as_index=False).head(1)
                   .sort_values('score', ascending=False))
