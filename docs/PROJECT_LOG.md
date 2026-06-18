@@ -826,6 +826,85 @@ Docs updated: TECHNICAL_DOC §5 (regime + oversold) and §12 (config.json). Word
 
 ---
 
+## Entry 021 — 2026-06-15
+
+### Call-writes, earnings, breakdown regime gate, doc refresh, encoding fix, single-file delivery
+(Consolidated entry — covers everything since 020; an earlier draft of this entry didn't persist.)
+
+**Telegram polish.** Compacted the report to one line per item so nothing wraps on a phone:
+sleeve names abbreviated (`SLEEVE_ABBR`, 5–6 chars) with Δ + ann-yield on the per-sleeve line;
+monitor/rolls reduced from wide tables to compact rows; earnings shown as **M/D**; deltas printed
+without the leading zero. Added a command reference to `TECHNICAL_DOC.md` (§13.2a) and sleeve
+abbreviations (§13.2b).
+
+**Word guide v2 → v3.** v2 resolved 9 user comments (module-aligned §1 bullets, wheel framing in
+§2, merged volatility §3+§4, "Quality"→"Fundamentals", monitor roll/assign alternatives, moved
+"Where the details live" before the Glossary, consolidated Glossary with output-columns/commands/
+terms/sleeves; comments stripped; renumbered). v3 (`Options_System_Guide_v3.docx`, v1.3) adds the
+breakdown gate, **§8.4 Call-write suggestions + WMT worked example**, earnings, roll DTE variety,
+CSV-attachment note, and glossary rows. (docx edited via python-docx: dup style names → reuse
+style objects; no Table Grid → manual XML borders. Mount corrupted docx reads twice → user
+re-uploaded; worked from a sandbox copy.)
+
+**Regime gate → `breakdown` (steepness, not level).** Replaced the falling-knife/new-low rule.
+`regime_block` now skips only an ACTIVE breakdown: steep drop (`dd_fast` ≥ `DROP_PCT` 15% over
+`DROP_WINDOW` 10d) OR vol spike (`hv_fast`/`hv_slow` ≥ `VOL_RATIO` 1.8 AND `hv_fast` ≥ `VOL_ABS`
+50%). A calm base at a low now passes. `compute_technicals` gained `dd_fast/hv_fast/hv_slow/
+vol_ratio`. Legacy `downtrend_slope`/`new_low_tol`/`swing_low_126` retired (unused). Tested on
+synthetic series.
+
+**IV history.** Confirmed already fully backfilled (27,108 IBKR rows, ~251/ticker, current) in
+`data/iv_history.csv` — the near-zero IV Rank is genuine (vol mean-reverted post-pullback), not a
+data gap.
+
+**Call-write (covered call / roll-up) suggestions** (`monitor.py`). For underlyings with long
+exposure — shares (≥100) or long calls — score OTM calls to **sell**: `CC_W_OPTION` 0.6 ×
+option-edge (IV rank, IV/HV, ann premium, percentile-ranked) + `CC_W_RESIST` 0.4 × resistance
+cushion (strike vs the higher of 20-day upper Bollinger / swing high) + a capped `CC_LONG_BONUS`
+(6) when the strike clears / stock is near the ~3-month high (`long_high_days` 63). Conservative
+0.15–0.25Δ. **Coverage netting**: writable lots = shares/100 + long calls − calls already written;
+`respect_coverage` toggle (set **false** so fully-covered names still appear as roll targets).
+**Nearest-strike fallback**: when no strike lands in the Δ band (e.g. high-priced MSFT, strikes
+skip the band) it shows the strikes closest to mid-band so you still get candidates. Writes
+`covered_calls.csv`. Per-ticker diagnostics print (and log) detection + band counts.
+
+**Earnings dates** surfaced as an `earnings` column (screener + monitor), shown as M/D in console
+and Telegram headers/lines.
+
+**Roll suggestions → DTE variety.** `build_roll_suggestions` now shows the best strike per expiry
+across the nearest few DTEs (was top-3-by-score, which clustered in one expiry).
+
+**cp932 encoding crash (important).** The Japanese (cp932) Windows console couldn't encode `—`
+(—), so `screener.py`'s verbose `_p(summary)` threw `UnicodeEncodeError` and the screener died
+mid-scan → stale `screener_output.csv`. Fix: force UTF-8 (`sys.stdout/stderr.reconfigure(
+encoding='utf-8', errors='replace')`) at the top of `screener.py` (process-wide; `monitor.py`/
+`place_stops.py` inherit via import) and `daily_report.py`.
+
+**Single-file delivery.** `daily_report.py` now attaches ONE combined file via `notify.send_document`:
+a multi-tab `daily_report.xlsx` (Screener/Monitor/Rolls/CallWrites via openpyxl), with a single
+combined `daily_report.csv` (sections stacked) as the fallback when openpyxl is missing — never the
+four separate CSVs again. `requirements.txt` += `openpyxl`. Clubbed the call-writes into one
+compact block (all tickers, one line each) instead of a header+box per ticker.
+
+**Batch logging.** `run_daily.bat` / `run_weekly.bat` tee full output (incl. call-write/coverage
+diagnostics) to `logs\daily.log` / `logs\weekly.log` and echo to console.
+
+**config.json**: added `regime` breakdown params, `covered_calls` (incl. `respect_coverage`),
+`report.attach_csv`. **.gitignore**: += `covered_calls.csv`, `daily_report.xlsx`, `daily_report.csv`.
+
+### Progress
+- [x] Breakdown regime gate (drop/vol-spike) + config + tests; legacy knobs retired
+- [x] Call-write suggestions (shares + long calls), coverage toggle, nearest-strike fallback (MSFT fixed)
+- [x] Earnings column (screener+monitor+Telegram, M/D); roll DTE variety
+- [x] cp932 UTF-8 fix (screener completes again); batch logging
+- [x] Single combined attachment (xlsx tabs / combined-csv fallback); compact clubbed call-writes
+- [x] Docs: TECHNICAL_DOC.md refreshed; Word guide v3; openpyxl in requirements
+- [ ] User: pip install -r requirements.txt; run_daily.bat; verify xlsx + MSFT; commit/push
+- [ ] Open offers: drop inline text tables (rely on attachment); widen CC delta_max vs fallback; short-call roll engine; skip-stale-monitor guard; IV/HV shorter-HV representativeness
+- [ ] Extend rolls/stops to calls + combos; performance pass; Phase 2 VM
+
+---
+
 ## Entry 021 — 2026-06-14
 
 ### Telegram report polish, docs v2, regime redesign, covered calls, earnings, roll variety

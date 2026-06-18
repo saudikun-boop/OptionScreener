@@ -13,7 +13,7 @@ echo ================================================================
 echo  WEEKLY IV REFRESH   update_iv_history.py  (full-year IBKR IV/HV)
 echo  [%date% %time%]  running (needs IB Gateway) ... one line per ticker
 echo ================================================================
-powershell -NoProfile -Command "$ErrorActionPreference='Continue'; & '.\venv\Scripts\python.exe' -u update_iv_history.py 2>&1 | ForEach-Object { [string]$_ } | Tee-Object -FilePath '%LOG%' -Append"
+powershell -NoProfile -Command "$ErrorActionPreference='Continue'; & '.\venv\Scripts\python.exe' -u code\update_iv_history.py 2>&1 | ForEach-Object { [string]$_ } | Tee-Object -FilePath '%LOG%' -Append"
 
 echo(
 echo  [%date% %time%]  DONE   full log: %LOG%

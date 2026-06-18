@@ -126,8 +126,10 @@ W_DIVERSIFY   = 0.20
 
 # Diversification — score each candidate by correlation to CURRENT holdings.
 # Holdings are read from monitor_output.csv (keeps screener Gateway-free).
-HOLDINGS_PATH      = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                  'monitor_output.csv')
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # project root (parent of code/)
+REPORTS_DIR = os.path.join(_ROOT, 'reports')                          # all generated outputs
+os.makedirs(REPORTS_DIR, exist_ok=True)
+HOLDINGS_PATH      = os.path.join(REPORTS_DIR, 'monitor_output.csv')
 CORR_LOOKBACK_DAYS = 126   # ~6 months of daily returns
 
 # Position sizing — assignment + drawdown basis.
@@ -140,9 +142,9 @@ ASSUMED_DRAWDOWN = 0.15      # -X% rule: adverse move below strike where you'd e
 PROFIT_TARGET_PCT = 0.70
 HARD_CLOSE_DTE    = 21
 
-_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-IV_HISTORY_PATH = os.path.join(_SCRIPT_DIR, 'data', 'iv_history.csv')
-ACCOUNT_FILE = os.path.join(_SCRIPT_DIR, 'data', 'account.json')   # written by monitor.py
+_SCRIPT_DIR = _ROOT                                                # config.json + data/ live in root
+IV_HISTORY_PATH = os.path.join(_ROOT, 'data', 'iv_history.csv')
+ACCOUNT_FILE = os.path.join(_ROOT, 'data', 'account.json')        # written by monitor.py
 IV_RANK_LOOKBACK = 252
 IV_HISTORY_COLS = ['date', 'ticker', 'iv', 'hv', 'source']
 
@@ -942,7 +944,7 @@ def main():
         print("=" * 74)
         print(best[sleeve_cols].to_string(index=False))
 
-    df.to_csv('screener_output.csv', index=False)
+    df.to_csv(os.path.join(REPORTS_DIR, 'screener_output.csv'), index=False)
     print(f"\nSaved -> screener_output.csv  ({len(df)} rows)")
 
 

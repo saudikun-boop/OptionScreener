@@ -25,11 +25,14 @@ for _s in (sys.stdout, sys.stderr):          # UTF-8 so non-cp932 chars don't cr
     except Exception:
         pass
 
-_DIR = os.path.dirname(os.path.abspath(__file__))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(_HERE)                       # project root (parent of code/)
+_REPORTS = os.path.join(_ROOT, 'reports')            # where the CSV/xlsx outputs live
+os.makedirs(_REPORTS, exist_ok=True)
 
 def _rep(key, default):
     try:
-        with open(os.path.join(_DIR, 'config.json')) as f:
+        with open(os.path.join(_ROOT, 'config.json')) as f:
             return json.load(f).get('report', {}).get(key, default)
     except Exception:
         return default
@@ -55,7 +58,7 @@ def _ab(sleeve):
 
 
 def _path(name):
-    return os.path.join(_DIR, name)
+    return os.path.join(_REPORTS, name)
 
 
 def _md(s):

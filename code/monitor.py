@@ -10,6 +10,7 @@ flagged together — if any leg triggers, the whole group is flagged.
 Requires IB Gateway running on PORT below.
 """
 
+import os
 from ib_insync import IB
 import yfinance as yf
 from datetime import date
@@ -19,6 +20,7 @@ from scipy.stats import norm
 import warnings
 
 import screener as S          # reuse screener gates + scoring for roll candidates
+_REPORTS = S.REPORTS_DIR      # all outputs go to <root>/reports/
 warnings.filterwarnings('ignore')
 
 # ── Config (defaults; overridden by config.json via screener) ─────────────────
@@ -163,7 +165,7 @@ def print_roll_suggestions(rolls):
                          'net_credit': r.get('net_credit'), 'delta': r['delta'],
                          'iv_rank': r.get('iv_rank'), 'score': r['score']})
     if flat:
-        pd.DataFrame(flat).to_csv('roll_suggestions.csv', index=False)
+        pd.DataFrame(flat).to_csv(os.path.join(_REPORTS, 'roll_suggestions.csv'), index=False)
         print("\nSaved → roll_suggestions.csv")
 
 
@@ -329,7 +331,7 @@ def print_covered_calls(df):
     top = (df.sort_values('score', ascending=False)
              .groupby('ticker', as_index=False).head(CC_TOP_N)
              .sort_values(['ticker', 'score'], ascending=[True, False]))
-    top.to_csv('covered_calls.csv', index=False)         # CSV keeps ISO dates + cc_open flag
+    top.to_csv(os.path.join(_REPORTS, 'covered_calls.csv'), index=False)   # ISO dates + cc_open flag
     disp = top.copy()
     if 'earnings' in disp.columns:
         disp['earnings'] = disp['earnings'].map(_md)      # console shows M/D
@@ -565,7 +567,7 @@ def main():
     else:
         print(f"→ Short-put exposure (max loss at strike −{dd}%): ${total_exp:,}  (NLV n/a — run with Gateway)")
 
-    df.to_csv('monitor_output.csv', index=False)
+    df.to_csv(os.path.join(_REPORTS, 'monitor_output.csv'), index=False)
     print(f"Saved → monitor_output.csv")
 
     # ── Roll suggestions: reuse screener scoring on the same ticker ────────────

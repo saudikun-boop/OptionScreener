@@ -540,14 +540,14 @@ to the code default. After editing: `git add config.json && git commit && git pu
 2. IB Gateway installed; log in; enable **Auto Restart**. Live port 4001, paper 4002.
 3. Telegram: create a bot via **@BotFather**, get the token; get your chat id via
    **@userinfobot**; put both in `telegram_config.json`.
-4. `venv\Scripts\python.exe notify.py` → confirm a test message arrives.
+4. `venv\Scripts\python.exe code\notify.py` → confirm a test message arrives.
 
 ### 13.2 Daily workflow (PC)
 ```
-venv\Scripts\python.exe monitor.py        # positions, flags, exposure, NLV, rolls
-venv\Scripts\python.exe screener.py       # ranked candidates
-venv\Scripts\python.exe daily_report.py   # Telegram digest
-venv\Scripts\python.exe place_stops.py    # (advisory) review stops; flip MODE='live' to place
+venv\Scripts\python.exe code\monitor.py        # positions, flags, exposure, NLV, rolls
+venv\Scripts\python.exe code\screener.py       # ranked candidates
+venv\Scripts\python.exe code\daily_report.py   # Telegram digest
+venv\Scripts\python.exe code\place_stops.py    # (advisory) review stops; flip MODE='live' to place
 ```
 or just schedule `run_daily.bat`. Weekly: `update_iv_history.py` (or `run_weekly.bat`).
 
@@ -561,22 +561,22 @@ update_iv_history) need **IB Gateway running and logged in**; the rest are yfina
 |---|---|---|---|
 | Open `cmd` in the folder | `cd C:\ibkr_screener` | — | — |
 | One-time: install deps | `venv\Scripts\python.exe -m pip install -r requirements.txt` | No | — |
-| Test Telegram is wired up | `venv\Scripts\python.exe notify.py` | No | sends a test msg |
-| Check positions, P&L, exposure, rolls | `venv\Scripts\python.exe monitor.py` | **Yes** | `monitor_output.csv`, `roll_suggestions.csv`, `data\account.json` |
-| Find & rank candidates | `venv\Scripts\python.exe screener.py` | No | `screener_output.csv` |
-| Build + send the Telegram digest | `venv\Scripts\python.exe daily_report.py` | No | sends Telegram |
-| Review stop orders (advisory) | `venv\Scripts\python.exe place_stops.py` | **Yes** | nothing (prints) |
+| Test Telegram is wired up | `venv\Scripts\python.exe code\notify.py` | No | sends a test msg |
+| Check positions, P&L, exposure, rolls | `venv\Scripts\python.exe code\monitor.py` | **Yes** | `monitor_output.csv`, `roll_suggestions.csv`, `data\account.json` |
+| Find & rank candidates | `venv\Scripts\python.exe code\screener.py` | No | `screener_output.csv` |
+| Build + send the Telegram digest | `venv\Scripts\python.exe code\daily_report.py` | No | sends Telegram |
+| Review stop orders (advisory) | `venv\Scripts\python.exe code\place_stops.py` | **Yes** | nothing (prints) |
 | Actually place the stops | set `MODE='live'` in `place_stops.py`, then run it and type **YES** | **Yes** | resting GTC orders |
-| Refresh IV/HV history (weekly) | `venv\Scripts\python.exe update_iv_history.py` | **Yes** | `data\iv_history.csv` |
+| Refresh IV/HV history (weekly) | `venv\Scripts\python.exe code\update_iv_history.py` | **Yes** | `data\iv_history.csv` |
 | Run the whole daily flow | `run_daily.bat` | for monitor/stops | all of the above |
 | Run the weekly IV refresh | `run_weekly.bat` | **Yes** | `data\iv_history.csv` |
 
 Typical morning, copy-paste:
 ```
 cd C:\ibkr_screener
-venv\Scripts\python.exe monitor.py
-venv\Scripts\python.exe screener.py
-venv\Scripts\python.exe daily_report.py
+venv\Scripts\python.exe code\monitor.py
+venv\Scripts\python.exe code\screener.py
+venv\Scripts\python.exe code\daily_report.py
 ```
 
 Notes:
@@ -584,7 +584,7 @@ Notes:
   `screener.py` (and, if present, `monitor.py`), so run those first. On its own it just
   reports whatever CSVs already exist.
 - **PowerShell vs cmd.** Both work. In PowerShell you can also write
-  `.\venv\Scripts\python.exe screener.py`.
+  `.\venv\Scripts\python.exe code\screener.py`.
 - **The cloud copy runs itself.** GitHub Actions runs `screener.py` then `daily_report.py`
   on a schedule (see §14) — no commands needed there. You only run the IBKR scripts
   (monitor / place_stops / update_iv_history) locally, since those need Gateway.

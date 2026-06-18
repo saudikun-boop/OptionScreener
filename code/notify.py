@@ -16,7 +16,8 @@ import html
 
 import requests
 
-_CFG = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'telegram_config.json')
+_CFG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                    'telegram_config.json')   # project root (parent of code/)
 _API = "https://api.telegram.org/bot{token}/sendMessage"
 _DOC = "https://api.telegram.org/bot{token}/sendDocument"
 _MAX = 3900   # Telegram hard limit is 4096; leave headroom
