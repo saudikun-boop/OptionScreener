@@ -157,8 +157,11 @@ def fmt_screener():
         e_s = f" E{_md(e)}" if pd.notna(e) and str(e) not in ('', 'nan') else ""
         lines.append(f"{str(x['ticker']):<5} {x['strike']:g}P {int(x['dte'])}d "
                      f"Δ{d_s} {ann_s} s{x['score']:.0f}{e_s}")
+    # Emit as small monospace blocks (≤8 lines) so Telegram doesn't treat one big block
+    # as a syntax-highlighted "code" block (which shows up red on some themes).
+    blocks = [notify.mono("\n".join(lines[i:i + 8])) for i in range(0, len(lines), 8)]
     out = [f"<b>SCREENER</b> — {len(df)} candidates · top {len(order)} names\n"
-           + notify.mono("\n".join(lines))]
+           + "\n".join(blocks)]
     if 'sleeve' in df.columns:                       # diversification menu (one per sleeve)
         book = (df.groupby('sleeve', as_index=False).head(1)
                   .sort_values('score', ascending=False))
@@ -198,9 +201,10 @@ def fmt_covered_calls():
         ann_s = f"{ann:.0f}%" if pd.notna(ann) else "—"
         e = x.get('earnings')
         e_s = f" E{_md(e)}" if pd.notna(e) and str(e) not in ('', 'nan') else ""
-        lines.append(f"{str(x['ticker']):<5} {x['strike']:g}C {int(x['dte'])}d "
+        tkr = str(x['ticker']) + ('*' if x.get('cc_open') else '')
+        lines.append(f"{tkr:<6} {x['strike']:g}C {int(x['dte'])}d "
                      f"Δ{d_s} {ann_s} s{x['score']:.0f}{e_s}")
-    return ("<b>CALL WRITES</b>  <i>sell vs shares/long calls</i>\n"
+    return ("<b>CALL WRITES</b>  <i>* = call already open</i>\n"
             + notify.mono("\n".join(lines)))
 
 

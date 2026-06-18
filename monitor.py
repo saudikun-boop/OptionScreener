@@ -175,7 +175,7 @@ def _call_delta(stock, strike, T, iv):
     return float(norm.cdf(d1))
 
 
-def build_covered_calls(holdings, iv_hist_df):
+def build_covered_calls(holdings, iv_hist_df, open_cc=None):
     """holdings: {ticker: shares}. For each stock you own (>=100 sh), score OTM calls in
     the CC_DELTA_MIN..MAX band, combining:
       • option-edge  — IV rank, IV/HV, annualized premium (percentile-ranked across the pool)
@@ -184,6 +184,7 @@ def build_covered_calls(holdings, iv_hist_df):
       • long-high bonus (small, capped) — when the strike clears the ~3-month high, and/or
                        the stock is trading near that high (writing at the top of the range)
     No gates — every eligible call is scored and surfaced. Returns a scored DataFrame."""
+    open_cc = open_cc or set()                 # tickers where you already hold a short call
     today = date.today()
     rows = []
     for tkr, lots, basis in holdings:
@@ -250,6 +251,7 @@ def build_covered_calls(holdings, iv_hist_df):
                 rc = ((strike - resist_near) / price) if resist_near else ((strike - price) / price)
                 rowd = {
                     'ticker': tkr, 'basis': basis, 'lots': lots,
+                    'cc_open': tkr in open_cc,
                     'stock_price': round(price, 2),
                     'expiry': exp_date.strftime('%Y-%m-%d'), 'dte': dte,
                     'earnings': str(earnings) if earnings else None,
@@ -327,13 +329,16 @@ def print_covered_calls(df):
     top = (df.sort_values('score', ascending=False)
              .groupby('ticker', as_index=False).head(CC_TOP_N)
              .sort_values(['ticker', 'score'], ascending=[True, False]))
-    top.to_csv('covered_calls.csv', index=False)         # CSV keeps ISO dates
+    top.to_csv('covered_calls.csv', index=False)         # CSV keeps ISO dates + cc_open flag
     disp = top.copy()
     if 'earnings' in disp.columns:
         disp['earnings'] = disp['earnings'].map(_md)      # console shows M/D
+    if 'cc_open' in disp.columns:                          # mark names where a call is already open
+        disp['ticker'] = disp.apply(
+            lambda r: f"{r['ticker']}*" if r.get('cc_open') else r['ticker'], axis=1)
     show = [c for c in cols if c in disp.columns]
     print(disp[show].to_string(index=False))
-    print("\nSaved → covered_calls.csv")
+    print("\n* = a short call is already open on this name.   Saved → covered_calls.csv")
 
 
 def main():
@@ -402,7 +407,7 @@ def main():
 
     if not all_opts:
         print("\nNo open option positions. Showing call-write suggestions for your holdings.")
-        print_covered_calls(build_covered_calls(call_holdings, iv_hist_df))
+        print_covered_calls(build_covered_calls(call_holdings, iv_hist_df, set(short_call_lots)))
         return
 
     print(f"\n{len(all_opts)} option position(s) found.\n")
@@ -570,7 +575,7 @@ def main():
 
     # ── Call-write suggestions (covered calls on shares; roll-ups vs long calls) ──
     if call_holdings:
-        print_covered_calls(build_covered_calls(call_holdings, iv_hist_df))
+        print_covered_calls(build_covered_calls(call_holdings, iv_hist_df, set(short_call_lots)))
 
 
 if __name__ == '__main__':
