@@ -190,6 +190,7 @@ MAX_RISK_PCT = _c('sizing', 'max_risk_pct', MAX_RISK_PCT)
 ASSUMED_DRAWDOWN = _c('sizing', 'assumed_drawdown', ASSUMED_DRAWDOWN)
 REPORT_TOP_TICKERS = _c('report', 'top_tickers', 5)
 REPORT_PER_TICKER  = _c('report', 'per_ticker', 3)
+REPORT_TOP_DIVIDENDS = _c('report', 'top_dividends', 3)   # dividend-payer section size
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -383,7 +384,7 @@ def get_fundamentals(yf_t):
         f['peg']            = info.get('pegRatio') or info.get('trailingPegRatio')
         f['roe']            = info.get('returnOnEquity')
         f['rev_growth']     = info.get('revenueGrowth')
-        f['div_yield']      = info.get('dividendYield')
+        f['div_yield']      = info.get('dividendYield')   # current yfinance returns a PERCENT (e.g. 4.55)
         f['payout']         = info.get('payoutRatio')
         f['debt_to_equity'] = info.get('debtToEquity')
         f['current_ratio']  = info.get('currentRatio')
@@ -754,7 +755,7 @@ def screen_ticker(ticker, iv_hist_df, holdings_returns, verbose=True):
                 '_rsi':        tech.get('rsi'),
                 '_bb_pctb':    tech.get('bb_pctb'),
                 '_support_margin': support_margin,
-                'div_yield':   round(fund['div_yield'] * 100, 2) if fund.get('div_yield') else None,
+                'div_yield':   round(fund['div_yield'], 2) if fund.get('div_yield') else None,   # %
             })
 
     tag = ' ETF' if etf else ''
@@ -943,6 +944,23 @@ def main():
         print(f"BEST PER SLEEVE  (top {PER_SLEEVE_TOP}/sleeve — pick across sleeves to diversify)")
         print("=" * 74)
         print(best[sleeve_cols].to_string(index=False))
+
+    # Top dividend payers among the candidates (handy: if assigned, you'd own a dividend stock)
+    if 'div_yield' in df.columns:
+        dv = df[df['div_yield'].notna() & (df['div_yield'] > 0)]
+        if 'etf' in dv.columns:                          # dividend STOCKS only (exclude ETFs)
+            dv = dv[~dv['etf'].astype(str).str.lower().eq('true')]
+        if not dv.empty:
+            dvbest = (dv.sort_values('score', ascending=False)
+                        .groupby('ticker', as_index=False).head(1)
+                        .sort_values('div_yield', ascending=False).head(REPORT_TOP_DIVIDENDS))
+            dcols = [c for c in ['ticker', 'div_yield', 'stock_price', 'otm_%', 'expiry', 'dte',
+                                 'strike', 'mid', 'delta', 'ann_ret_pct', 'iv_rank', 'score']
+                     if c in dvbest.columns]
+            print("\n" + "=" * 74)
+            print(f"TOP DIVIDEND PAYERS  (top {REPORT_TOP_DIVIDENDS} by yield among candidates)")
+            print("=" * 74)
+            print(dvbest[dcols].to_string(index=False))
 
     df.to_csv(os.path.join(REPORTS_DIR, 'screener_output.csv'), index=False)
     print(f"\nSaved -> screener_output.csv  ({len(df)} rows)")

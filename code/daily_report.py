@@ -38,6 +38,7 @@ def _rep(key, default):
         return default
 TOP_TICKERS = _rep('top_tickers', 5)   # how many distinct tickers to show
 PER_TICKER  = _rep('per_ticker', 3)    # top contracts shown per ticker
+TOP_DIVIDENDS = _rep('top_dividends', 3)  # dividend-payer section size
 ATTACH_CSV  = _rep('attach_csv', True) # also attach the full CSVs to Telegram
 
 # Short (5-6 char) sleeve labels so the "Best per sleeve" line fits a phone screen.
@@ -205,6 +206,33 @@ def fmt_covered_calls():
             + notify.mono("\n".join(lines)))
 
 
+def fmt_dividends():
+    """Top dividend-paying stocks among the screener candidates (with dividend %)."""
+    f = _path('screener_output.csv')
+    if not os.path.exists(f):
+        return ''
+    try:
+        df = pd.read_csv(f)
+    except Exception:
+        return ''
+    if 'div_yield' not in df.columns or df.empty:
+        return ''
+    dv = df[df['div_yield'].notna() & (df['div_yield'] > 0)]
+    if 'etf' in dv.columns:                                  # dividend STOCKS only (exclude ETFs)
+        dv = dv[~dv['etf'].astype(str).str.lower().eq('true')]
+    if dv.empty:
+        return ''
+    best = dv.sort_values('score', ascending=False).groupby('ticker', as_index=False).head(1)
+    top = best.sort_values('div_yield', ascending=False).head(TOP_DIVIDENDS)
+    lines = []
+    for _, x in top.iterrows():
+        ann = x.get('ann_ret_pct')
+        ann_s = f"{ann:.0f}%/y" if pd.notna(ann) else ""
+        lines.append(f"{x['ticker']} {x['div_yield']:.1f}%div {x['strike']:g}P "
+                     f"{int(x['dte'])}d {ann_s} s{x['score']:.0f}")
+    return "<b>DIVIDENDS</b>  <i>top payers (div% / put)</i>\n" + "\n".join(lines)
+
+
 def build_workbook():
     """Combine the run's CSVs into one multi-tab .xlsx. Returns the path, or None.
     Prints a clear reason on any failure so the log shows why it fell back to CSV."""
@@ -288,6 +316,9 @@ def main():
     if cc:
         parts.append(cc)
     parts.append(fmt_screener())
+    dvd = fmt_dividends()
+    if dvd:
+        parts.append(dvd)
     msg = "\n\n".join(parts)
     sent = notify.send_telegram(msg)
     print("Report sent." if sent else "Report NOT sent (see message above).")
