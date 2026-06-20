@@ -16,6 +16,7 @@ from datetime import date
 import pandas as pd
 
 import json
+import glob
 
 import notify
 
@@ -243,6 +244,13 @@ def build_workbook():
         return None
     # Dated filename so an .xlsx left open on a device can't lock today's write.
     out = _path(f"daily_report_{date.today()}.xlsx")
+    # Don't accumulate: remove previous report files (keep only this run's).
+    for old in glob.glob(_path('daily_report_*.xlsx')) + [_path('daily_report.csv')]:
+        if os.path.abspath(old) != os.path.abspath(out) and os.path.exists(old):
+            try:
+                os.remove(old)
+            except OSError:
+                pass
     wrote = 0
     try:
         with pd.ExcelWriter(out, engine='openpyxl') as xw:
