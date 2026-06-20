@@ -4,7 +4,7 @@
   "weights":  { "option": 0.40, "technical": 0.40, "diversify": 0.20 },
 
   "gates":    { "min_dte": 20, "max_dte": 60, "delta_min": 0.15, "delta_max": 0.30,
-                "max_spread_pct": 0.10, "min_open_interest": 100,
+                "max_spread_pct": 0.10, "min_open_interest": 100, "require_quote": true,
                 "min_roe": 0.08, "min_rev_growth": 0.0, "max_forward_pe": 60 },
 
   "regime":   { "mode": "breakdown", "drop_window": 10, "drop_pct": 0.15,

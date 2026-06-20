@@ -169,6 +169,7 @@ MIN_DTE = _c('gates', 'min_dte', MIN_DTE);   MAX_DTE = _c('gates', 'max_dte', MA
 DELTA_MIN = _c('gates', 'delta_min', DELTA_MIN);  DELTA_MAX = _c('gates', 'delta_max', DELTA_MAX)
 MAX_SPREAD_PCT = _c('gates', 'max_spread_pct', MAX_SPREAD_PCT)
 MIN_OPEN_INTEREST = _c('gates', 'min_open_interest', MIN_OPEN_INTEREST)
+REQUIRE_QUOTE = _c('gates', 'require_quote', True)   # need a live bid&ask (sellable; real IV)
 MIN_ROE = _c('gates', 'min_roe', MIN_ROE)
 MIN_REV_GROWTH = _c('gates', 'min_rev_growth', MIN_REV_GROWTH)
 MAX_FORWARD_PE = _c('gates', 'max_forward_pe', MAX_FORWARD_PE)
@@ -686,6 +687,9 @@ def screen_ticker(ticker, iv_hist_df, holdings_returns, verbose=True, div_collec
             oi   = int(_num(row.get('openInterest')))
             vol  = int(_num(row.get('volume')))
             opt_price = (bid + ask) / 2 if bid > 0 and ask > 0 else last
+            if REQUIRE_QUOTE and not (bid > 0 and ask > 0):
+                reasons['no_quote'] += 1        # no live bid/ask → not sellable; stale IV
+                continue
             if opt_price <= 0:
                 reasons['no_price'] += 1
                 continue
