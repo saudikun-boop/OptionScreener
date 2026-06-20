@@ -602,7 +602,7 @@ def _num(x, default=0.0):
 
 # ── Per-ticker scan ───────────────────────────────────────────────────────────
 
-def screen_ticker(ticker, iv_hist_df, holdings_returns, verbose=True):
+def screen_ticker(ticker, iv_hist_df, holdings_returns, verbose=True, div_collector=None):
     _p = print if verbose else (lambda *a, **k: None)
     today = date.today()
     yf_t  = yf.Ticker(ticker)
@@ -618,6 +618,12 @@ def screen_ticker(ticker, iv_hist_df, holdings_returns, verbose=True):
     fund = get_fundamentals(yf_t)
     etf  = is_etf(ticker, fund)
     sl   = sleeve(ticker, fund)
+
+    if div_collector is not None and not etf:            # dividend watchlist — captured BEFORE gates
+        _dy = fund.get('div_yield')
+        if _dy:
+            div_collector.append({'ticker': ticker, 'stock_price': round(price, 2),
+                                  'div_yield': round(_dy, 2), 'sector': fund.get('sector')})
 
     ibkr_hv = latest_ibkr_hv(iv_hist_df, ticker)
     hv_used = ibkr_hv if ibkr_hv else hv_yf
@@ -893,14 +899,25 @@ def main():
     else:
         print("Diversification: no holdings found — diversification score skipped.\n")
 
-    all_results, atm_rows = [], []
+    all_results, atm_rows, div_scan = [], [], []
     for ticker in TICKERS:
-        rows, atm = screen_ticker(ticker, iv_hist_df, holdings_returns)
+        rows, atm = screen_ticker(ticker, iv_hist_df, holdings_returns, div_collector=div_scan)
         all_results.extend(rows)
         if atm:
             atm_rows.append(atm)
 
     record_iv(atm_rows)
+
+    # Dividend watchlist — top payers across ALL stocks scanned (ungated), written for the report
+    if div_scan:
+        ddf = (pd.DataFrame(div_scan).drop_duplicates('ticker')
+                 .sort_values('div_yield', ascending=False).reset_index(drop=True))
+        ddf.to_csv(os.path.join(REPORTS_DIR, 'dividends.csv'), index=False)
+        print("\n" + "=" * 74)
+        print(f"TOP DIVIDEND STOCKS  (top {REPORT_TOP_DIVIDENDS} by yield, all stocks scanned — ungated)")
+        print("=" * 74)
+        print(ddf.head(REPORT_TOP_DIVIDENDS)[['ticker', 'div_yield', 'stock_price', 'sector']]
+                .to_string(index=False))
 
     if not all_results:
         print("\nNo candidates matched the gates.")
@@ -944,23 +961,6 @@ def main():
         print(f"BEST PER SLEEVE  (top {PER_SLEEVE_TOP}/sleeve — pick across sleeves to diversify)")
         print("=" * 74)
         print(best[sleeve_cols].to_string(index=False))
-
-    # Top dividend payers among the candidates (handy: if assigned, you'd own a dividend stock)
-    if 'div_yield' in df.columns:
-        dv = df[df['div_yield'].notna() & (df['div_yield'] > 0)]
-        if 'etf' in dv.columns:                          # dividend STOCKS only (exclude ETFs)
-            dv = dv[~dv['etf'].astype(str).str.lower().eq('true')]
-        if not dv.empty:
-            dvbest = (dv.sort_values('score', ascending=False)
-                        .groupby('ticker', as_index=False).head(1)
-                        .sort_values('div_yield', ascending=False).head(REPORT_TOP_DIVIDENDS))
-            dcols = [c for c in ['ticker', 'div_yield', 'stock_price', 'otm_%', 'expiry', 'dte',
-                                 'strike', 'mid', 'delta', 'ann_ret_pct', 'iv_rank', 'score']
-                     if c in dvbest.columns]
-            print("\n" + "=" * 74)
-            print(f"TOP DIVIDEND PAYERS  (top {REPORT_TOP_DIVIDENDS} by yield among candidates)")
-            print("=" * 74)
-            print(dvbest[dcols].to_string(index=False))
 
     df.to_csv(os.path.join(REPORTS_DIR, 'screener_output.csv'), index=False)
     print(f"\nSaved -> screener_output.csv  ({len(df)} rows)")

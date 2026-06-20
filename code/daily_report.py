@@ -207,37 +207,31 @@ def fmt_covered_calls():
 
 
 def fmt_dividends():
-    """Top dividend-paying stocks among the screener candidates (with dividend %)."""
-    f = _path('screener_output.csv')
+    """Top dividend-paying stocks across ALL stocks scanned (ungated watchlist), with div %."""
+    f = _path('dividends.csv')
     if not os.path.exists(f):
         return ''
     try:
         df = pd.read_csv(f)
     except Exception:
         return ''
-    if 'div_yield' not in df.columns or df.empty:
+    if df.empty or 'div_yield' not in df.columns:
         return ''
-    dv = df[df['div_yield'].notna() & (df['div_yield'] > 0)]
-    if 'etf' in dv.columns:                                  # dividend STOCKS only (exclude ETFs)
-        dv = dv[~dv['etf'].astype(str).str.lower().eq('true')]
-    if dv.empty:
-        return ''
-    best = dv.sort_values('score', ascending=False).groupby('ticker', as_index=False).head(1)
-    top = best.sort_values('div_yield', ascending=False).head(TOP_DIVIDENDS)
+    top = df.sort_values('div_yield', ascending=False).head(TOP_DIVIDENDS)
     lines = []
     for _, x in top.iterrows():
-        ann = x.get('ann_ret_pct')
-        ann_s = f"{ann:.0f}%/y" if pd.notna(ann) else ""
-        lines.append(f"{x['ticker']} {x['div_yield']:.1f}%div {x['strike']:g}P "
-                     f"{int(x['dte'])}d {ann_s} s{x['score']:.0f}")
-    return "<b>DIVIDENDS</b>  <i>top payers (div% / put)</i>\n" + "\n".join(lines)
+        px = f"${x['stock_price']:g}" if pd.notna(x.get('stock_price')) else ""
+        lines.append(f"{str(x['ticker']):<5} {x['div_yield']:.1f}%  {px}")
+    return ("<b>DIVIDENDS</b>  <i>top yield · all stocks (ungated)</i>\n"
+            + notify.mono("\n".join(lines)))
 
 
 def build_workbook():
     """Combine the run's CSVs into one multi-tab .xlsx. Returns the path, or None.
     Prints a clear reason on any failure so the log shows why it fell back to CSV."""
     sheets = [('screener_output.csv', 'Screener'), ('monitor_output.csv', 'Monitor'),
-              ('roll_suggestions.csv', 'Rolls'), ('covered_calls.csv', 'CallWrites')]
+              ('roll_suggestions.csv', 'Rolls'), ('covered_calls.csv', 'CallWrites'),
+              ('dividends.csv', 'Dividends')]
     present = [(f, n) for f, n in sheets if os.path.exists(_path(f))]
     if not present:
         print("Workbook: no CSVs present to combine.")
@@ -272,7 +266,8 @@ def build_combined_csv():
     """Fallback when openpyxl is missing: stack all CSVs into ONE file with a 'section'
     column (so you still get a single attachment, never four)."""
     sheets = [('screener_output.csv', 'Screener'), ('monitor_output.csv', 'Monitor'),
-              ('roll_suggestions.csv', 'Rolls'), ('covered_calls.csv', 'CallWrites')]
+              ('roll_suggestions.csv', 'Rolls'), ('covered_calls.csv', 'CallWrites'),
+              ('dividends.csv', 'Dividends')]
     frames = []
     for f, n in sheets:
         p = _path(f)
