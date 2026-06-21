@@ -146,6 +146,7 @@ name has deep, liquid options — liquidity matters more to a put seller than ra
 | Strike range | 0.75–1.02 × spot | Scan meaningful OTM puts (+ small ATM buffer). |
 | Liquidity — spread | bid-ask ≤ 10% of mid | Wide spreads erase edge on entry + exit. |
 | Liquidity — OI | open interest ≥ 100 (when present) | Tradability. `ALLOW_MISSING_OI` lets weekend 0/NaN OI through (data artifact, not illiquidity). |
+| Liquidity — live quote | `require_quote` (default on): need a real **bid & ask** | A no-bid put isn't sellable, and its IV would be back-solved from a stale last price. Turn off (`require_quote:false`) for pre-market/weekend runs. |
 | Earnings | skip expiries that straddle the next earnings date | Avoid binary vol-crush / gap risk. (Equities only.) |
 | Regime | `REGIME_MODE='breakdown'`: skip only **active sharp breakdowns** (steep drop OR vol spike) | See below. |
 | Solvency | drop clearly distressed balance sheets | "Don't get assigned a falling knife." Equities only. |
@@ -194,10 +195,20 @@ score = (Σ weightᵢ · bucketᵢ) / (Σ weightᵢ over available buckets)
 | Option edge | `W_OPTION` | IV Rank, IV/HV, annualized return, theta decay | **Percentile-rank** across candidates (higher = better) |
 | Technical | `W_TECHNICAL` | RSI sweet-spot, Bollinger %B, support cushion | RSI/BB are **direct 0–100**; support is percentile |
 | Diversification | `W_DIVERSIFY` | avg correlation to current holdings | **Absolute** 0–100 (not percentile) |
+| Fundamentals | `W_FUNDAMENTAL` | **FCF yield** (FCF ÷ market cap) + ROE | **Percentile-rank** (higher = better) |
 
-*Weights are tunable constants; the composite renormalizes so they need not sum to 1. The
-build history moved through option-heavy settings (e.g. 55/25/20, then a heavier technical
-tilt). Check the top of `screener.py` for the current values.
+*Weights are tunable constants (config.json `weights`); the composite renormalizes so they need
+not sum to 1. Current default is 0.40 / 0.40 / 0.20 / 0.30 (option / technical / diversify /
+fundamental). Check `config.json` for live values.
+
+**Fundamentals components (decision — FCF yield is now scored).** Based on Goldman Sachs' *"The Art
+of Put Selling"*: selling puts on **high-FCF-yield** stocks (top quintile) historically beat the
+index by ~250bps/yr at a higher Sharpe — FCF yield is a "margin of safety" proxy (higher margins,
+deleveraging, cash cushion). So a **fundamentals bucket** ranks candidates by **FCF yield**
+(`freeCashflow ÷ marketCap × 100`) blended with **ROE**, percentile-ranked, higher = better. Note
+fundamentals are *also* still a pass/fail gate (FCF>0, ROE≥8%, growth≥0, fwd P/E≤60); the bucket
+then ranks the survivors by quality. ETFs have no FCF yield → the bucket is skipped and the
+composite renormalizes.
 
 **Option-edge components**
 - **IV Rank** — per *ticker* (underlying-level), from the preferred IV source (§4). Same value
@@ -256,6 +267,8 @@ Connects to IB Gateway, pulls **all** option positions, and for each computes:
   `NEAR_ATM_BUFFER` (3%) above, else `OTM`.
 - **Earnings** — the next earnings date per ticker (`get_next_earnings`), shown compactly as
   **M/D** in the console and the Telegram lines so you can see binary risk at a glance.
+- **Collateral** — for short puts, the cash-secured amount set aside: `strike × 100 × |qty|`.
+- **Dividend yield** — the underlying's yield (%), so you can see income if assigned.
 - **Exposure** — for short puts, **max loss at the stop**: `strike × ASSUMED_DRAWDOWN × 100 ×
   |qty|` (your "−15% rule" expressed as dollars at risk). A whole-book total is printed as a
   **% of NLV**.
@@ -426,8 +439,10 @@ scheduled jobs just connect to the already-running Gateway. (Fuller automation =
 | 14 | Call-writes | **Covered-call / roll-up suggestions** on held shares & long calls: option-edge + resistance + capped 3-month-high bonus, conservative 0.15–0.25Δ. Coverage toggle nets out calls already written. |
 | 15 | Earnings dates | Surfaced as an `earnings` column (screener + monitor), shown as **M/D** in console and Telegram. |
 | 16 | CSV to phone | `daily_report` also **attaches the full CSVs** to Telegram (`sendDocument`) so detail is openable on the phone without screen-width limits. |
-
----
+| 17 | Universe | Expanded S&P 100 → + Dow & Nasdaq-100 names (liquid, optioned); ~149 equities + 9 ETFs. |
+| 18 | Fundamentals scored | Added a **4th bucket — FCF yield + ROE** (weight 0.30) per Goldman's *Art of Put Selling* (high FCF yield = margin of safety, +250bps/yr historically). Fundamentals remain a gate too. |
+| 19 | Live-quote gate | `require_quote` (default on): a contract needs a real **bid & ask** — no-bid puts aren't sellable and their IV would come from a stale last price. |
+| 20 | Dividend watchlist | Ungated `dividends.csv` — top dividend *stocks* by yield, captured before the gates (high yielders surface even when not tradable). Fixed a 100× yield bug. |
 
 ## 11. Field glossary (output columns)
 
@@ -450,9 +465,13 @@ scheduled jobs just connect to the already-running Gateway. (Fuller automation =
 | `ann_ret_pct` | Annualized return on collateral, % |
 | `lots` | Recommended contracts under the 3%/15% sizing |
 | `div_corr` | Avg correlation to current holdings (−1..+1) |
-| `score_option`/`score_technical`/`score_diversify` | Bucket scores 0–100 |
+| `fcf_yield` (shown `fcf_yield%`) | Free cash flow ÷ market cap, % (fundamentals-bucket input) |
+| `score_option`/`score_technical`/`score_diversify`/`score_fundamental` | Bucket scores 0–100 |
 | `score` | Weighted composite (the ranking key) |
 | `sleeve` | Diversification sleeve (asset class / sector) |
+
+*Excel "Screener" tab note:* the workbook reorders/renames these for readability (drops `etf`,
+shortens `sleeve`, `_pct`→`%`, rounds delta/theta) — the CSV keeps the raw names above.
 
 **Monitor (`monitor_output.csv`)**
 
@@ -461,10 +480,16 @@ scheduled jobs just connect to the already-running Gateway. (Fuller automation =
 | `combo` | `COMBO` if part of a multi-leg group |
 | `earnings` | Next earnings date (M/D) |
 | `stock`, `money` | Underlying spot; ITM/ATM/OTM |
+| `div_yield` | Underlying dividend yield (%) |
 | `qty`, `entry`, `current` | Contracts (− short); entry & current option price |
 | `pnl_%` | Position P&L (% of credit) |
+| `collateral` | Cash-secured collateral (short puts): `strike×100×|qty|` |
 | `exposure` | Max loss at the stop (short puts): `strike×0.15×100×|qty|` |
 | `action`, `reason` | CLOSE / ROLL? / HOLD and why |
+
+**Dividend watchlist (`dividends.csv`)** — top dividend-paying *stocks* across the whole scan,
+**ungated** (captured before the gates), ranked by yield: `ticker`, `div_yield` (%), `stock_price`,
+`sector`. Surfaces high-yield names even when they're not currently tradable.
 
 **Roll suggestions (`roll_suggestions.csv`)** — `pos_*` describe the position being rolled;
 `roll_*` the candidate (now one per expiry across several DTEs); `net_credit` = new mid −
@@ -491,9 +516,10 @@ buyback; plus the candidate's score.
 repo-tracked `config.json` that `screener.py` loads at startup and that `monitor.py` and
 `place_stops.py` read via the screener. Editing it changes behaviour without touching code, and
 because it's committed, the **cloud (GitHub Actions) and your PC run identical settings**. Sections:
-`weights` (option/technical/diversify), `gates` (DTE, delta, spread, OI, ROE, growth, P/E),
-`regime` (mode, drop_window, drop_pct, vol_fast, vol_slow, vol_ratio, vol_abs), `oversold`
-(z_threshold, bonus), `report` (top_tickers, per_ticker, **attach_csv**), `sizing`
+`weights` (option/technical/diversify/**fundamental**), `gates` (DTE, delta, spread, OI,
+**require_quote**, ROE, growth, P/E), `regime` (mode, drop_window, drop_pct, vol_fast, vol_slow,
+vol_ratio, vol_abs), `oversold` (z_threshold, bonus), `report` (top_tickers, per_ticker,
+**top_dividends**, attach_csv), `sizing`
 (account_size_fallback, max_risk_pct, assumed_drawdown), `monitor` (profit_target_pct,
 hard_close_dte, near_atm_buffer, roll_top_n), **`covered_calls`** (delta_min, delta_max,
 w_option, w_resist, resist_window, long_high_days, long_high_bonus, near_high_pct, top_n,
@@ -511,12 +537,13 @@ to the code default. After editing: `git add config.json && git commit && git pu
 | `MAX_SPREAD_PCT` | 0.10 | Liquidity (spread) gate |
 | `MIN_OPEN_INTEREST` | 100 | Liquidity (OI) gate |
 | `ALLOW_MISSING_OI` | True | Let 0/NaN OI through (weekends) |
+| `REQUIRE_QUOTE` | True | Require a live bid & ask (no stale-last IV; sellable) |
 | `REGIME_MODE` | `'breakdown'` | Regime gate mode (`breakdown`/`gate`/`off`) |
 | `DROP_WINDOW`/`DROP_PCT` | 10 / 0.15 | Steep-drop test: peak→now fall over N days |
 | `VOL_FAST`/`VOL_SLOW`/`VOL_RATIO`/`VOL_ABS` | 10 / 63 / 1.8 / 0.50 | Vol-spike test (fast vs baseline realized vol) |
 | `REQUIRE_SOLVENCY`/`REQUIRE_FUNDAMENTALS` | True | Quality gates |
 | `MIN_ROE`/`MIN_REV_GROWTH`/`MAX_FORWARD_PE` | 0.08 / 0.0 / 60 | Fundamental thresholds |
-| `W_OPTION`/`W_TECHNICAL`/`W_DIVERSIFY` | (see file) | Composite weights |
+| `W_OPTION`/`W_TECHNICAL`/`W_DIVERSIFY`/`W_FUNDAMENTAL` | 0.40/0.40/0.20/0.30 | Composite weights (4 buckets) |
 | `CORR_LOOKBACK_DAYS` | 126 | Correlation window |
 | `ACCOUNT_SIZE` | 700000 (fallback) | Overridden by `account.json` |
 | `MAX_RISK_PCT`/`ASSUMED_DRAWDOWN` | 0.03 / 0.15 | Sizing risk model |

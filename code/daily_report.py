@@ -67,7 +67,10 @@ _SCR_ORDER = ['ticker', 'sleeve', 'type', 'stock_price', 'strike', 'otm_%', 'exp
               'div_score', 'fwd_pe', 'fcf_yield', 'roe', 'bb_z', '_rsi', '_bb_pctb',
               '_support_margin', 'div_yield', 'iv_rank', 'iv_src', 'iv_pct', 'hv_pct']
 _SCR_RENAME = {'spread_pct': 'spread%', 'ann_ret_pct': 'ann_ret%', 'iv_pct': 'iv%',
-               'hv_pct': 'hv%', '_bb_pctb': '%B', 'fcf_yield': 'fcf_yield%'}
+               'hv_pct': 'hv%', '_bb_pctb': '%B', 'fcf_yield': 'fcf_yield%',
+               '_support_margin': 'support_margin', '_rsi': 'rsi',
+               'score_option': 'sc_opt', 'score_technical': 'sc_tech',
+               'score_diversify': 'sc_dvsfy', 'score_fundamental': 'sc_fund'}
 
 
 def _screener_view(df):
@@ -281,12 +284,19 @@ def build_workbook():
     wrote = 0
     try:
         with pd.ExcelWriter(out, engine='openpyxl') as xw:
+            from openpyxl.utils import get_column_letter
             for f, n in present:
                 try:
                     sdf = pd.read_csv(_path(f))
                     if n == 'Screener':
                         sdf = _screener_view(sdf)            # reorder/rename per the field spec
                     sdf.to_excel(xw, sheet_name=n, index=False)
+                    ws = xw.sheets[n]                         # auto-size columns to content (tight)
+                    for ci, col in enumerate(sdf.columns, start=1):
+                        body = sdf[col].head(300).astype(str)
+                        maxlen = max([len(str(col))] + [len(v) for v in body])
+                        ws.column_dimensions[get_column_letter(ci)].width = min(max(maxlen + 1, 5), 16)
+                    ws.freeze_panes = 'B2'                    # keep ticker + header visible when scrolling
                     wrote += 1
                 except Exception as e:
                     print(f"Workbook: sheet {n} skipped — {e}")

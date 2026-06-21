@@ -1005,3 +1005,57 @@ v1.4) command examples → `code\` + a project-layout note.
 - [ ] Pending: IV/HV shorter-HV representativeness; skip-stale-monitor guard; short-call roll engine; extend rolls/stops to calls+combos; Phase 2 VM
 
 ---
+
+## Entry 023 — 2026-06-20
+
+### Fundamentals (FCF-yield) bucket, dividend watchlist, require-live-quote gate, field layout
+
+**Fundamentals scoring bucket (Goldman "art of put selling").** User shared the GS paper: selling
+puts on **high-FCF-yield** stocks (top quintile) beat the index by ~250bps/yr at a higher Sharpe —
+FCF yield is a "margin of safety" proxy. Implemented a **4th scoring bucket** `score_fundamental`
+(weight **0.30**, `weights.fundamental`): percentile-ranked **FCF yield** (FCF ÷ market cap) blended
+with ROE. Composite renormalizes over available buckets (ETFs have no FCF → skip). Added
+`fcf_yield` to fundamentals (`freeCashflow/marketCap×100`) and to the candidate rows. Tested: a
+candidate with the best option-edge but weak fundamentals correctly drops below a high-FCF name.
+
+**Dividend yield 100× bug + dividend watchlist.** yfinance now returns `dividendYield` already as a
+percent; code still ×100 (TLT showed 455%). Fixed. Then built an **ungated dividend watchlist**
+(option 2): `screen_ticker` captures each stock's div yield BEFORE the gates (via a `div_collector`),
+so high-yield names knocked out by earnings/liquidity (USB, VZ, PFE, PEP, …) still surface. Writes
+`reports/dividends.csv`; Telegram `DIVIDENDS` section (monospace, ETFs excluded) + console block +
+Excel `Dividends` tab. Size via `report.top_dividends` (3).
+
+**Require live quote gate.** GILD showed a 43% IV on a strike with **no bids** — IV was back-solved
+from a stale `lastPrice` and the put wasn't sellable. Added `gates.require_quote` (default **true**):
+a contract needs a live **bid & ask** to qualify (no more stale-last fallback). Caveat: pre-market/
+weekend runs return few/none (quotes not live) — set `require_quote:false` for those. Also taught the
+team that the screener's per-strike OTM-put IV (skew) is expected to exceed IBKR's ATM IV.
+
+**Reports no longer accumulate.** Each run deletes prior `daily_report_*.xlsx` / `daily_report.csv`
+before writing the new dated one (keeps only the latest).
+
+**Screener field layout (user's Sheet1 spec).** Applied to the Excel **Screener tab** (the full-field
+view) via `daily_report._screener_view`: reordered columns, **dropped `etf`**, **shortened sleeve**
+(abbrev), **rounded delta/theta to 3**, `_pct`→`%` (`spread%`,`ann_ret%`,`iv%`,`hv%`,`%B`), added
+`fcf_yield%`, and slotted `score_fundamental` with the other score columns. The raw CSV keeps
+original names so the report code + cloud keep working.
+
+**Monitor: collateral + dividend yield.** Added `collateral` (strike×100×|qty| — cash secured) and
+`div_yield` (underlying) columns to the monitor table (console + Excel Monitor tab).
+
+**Misc.** VIX→^VIX index map; yfinance logging silenced; batch live-streaming + stderr cleanup (from
+prior turns, in place).
+
+### config.json additions
+`weights.fundamental` 0.30 · `gates.require_quote` true · `report.top_dividends` 3.
+
+### Progress
+- [x] Fundamentals/FCF-yield bucket (0.30) + fcf_yield computation; tested
+- [x] Dividend 100× fix + ungated dividend watchlist (csv + Telegram + Excel tab)
+- [x] require_quote gate (live bid/ask; filters no-bid/stale-IV contracts)
+- [x] Reports auto-cleanup (no accumulation); screener Excel field layout; monitor collateral + div yield
+- [ ] User: commit (`git add code/ config.json`); re-run during market hours to verify
+- [ ] Docs: update TECHNICAL_DOC + Word guide for the fundamentals bucket etc. (in progress)
+- [ ] Pending: IV/HV shorter-HV tweak; short-call roll engine; calls/combos rolls; Phase 2 VM
+
+---
