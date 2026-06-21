@@ -59,6 +59,33 @@ def _ab(sleeve):
     return SLEEVE_ABBR.get(s, s[:6].upper())
 
 
+# Column order + names for the Excel "Screener" tab (per the field-layout spec).
+_SCR_ORDER = ['ticker', 'sleeve', 'type', 'stock_price', 'strike', 'otm_%', 'expiry', 'dte',
+              'earnings', 'mid', 'spread_pct', 'open_int', 'volume', 'delta', 'theta', 'iv_hv',
+              'ann_ret_pct', 'score', 'score_option', 'score_technical', 'score_diversify',
+              'score_fundamental', 'collat_ct', 'risk_ct', 'income', 'lots', 'div_corr',
+              'div_score', 'fwd_pe', 'fcf_yield', 'roe', 'bb_z', '_rsi', '_bb_pctb',
+              '_support_margin', 'div_yield', 'iv_rank', 'iv_src', 'iv_pct', 'hv_pct']
+_SCR_RENAME = {'spread_pct': 'spread%', 'ann_ret_pct': 'ann_ret%', 'iv_pct': 'iv%',
+               'hv_pct': 'hv%', '_bb_pctb': '%B', 'fcf_yield': 'fcf_yield%'}
+
+
+def _screener_view(df):
+    """Reorder / rename / clean the screener columns for the Excel tab (drop etf, shorten
+    sleeve, round delta+theta, _pct->%, add fcf_yield%)."""
+    d = df.copy()
+    if 'etf' in d.columns:
+        d = d.drop(columns=['etf'])
+    if 'sleeve' in d.columns:
+        d['sleeve'] = d['sleeve'].map(lambda s: _ab(s) if pd.notna(s) else s)
+    for c in ('delta', 'theta'):
+        if c in d.columns:
+            d[c] = pd.to_numeric(d[c], errors='coerce').round(3)
+    cols = [c for c in _SCR_ORDER if c in d.columns]
+    cols += [c for c in d.columns if c not in cols]      # keep any extras at the end
+    return d[cols].rename(columns=_SCR_RENAME)
+
+
 def _path(name):
     return os.path.join(_REPORTS, name)
 
@@ -256,7 +283,10 @@ def build_workbook():
         with pd.ExcelWriter(out, engine='openpyxl') as xw:
             for f, n in present:
                 try:
-                    pd.read_csv(_path(f)).to_excel(xw, sheet_name=n, index=False)
+                    sdf = pd.read_csv(_path(f))
+                    if n == 'Screener':
+                        sdf = _screener_view(sdf)            # reorder/rename per the field spec
+                    sdf.to_excel(xw, sheet_name=n, index=False)
                     wrote += 1
                 except Exception as e:
                     print(f"Workbook: sheet {n} skipped — {e}")

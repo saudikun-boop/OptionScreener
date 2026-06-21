@@ -123,6 +123,7 @@ MAX_FORWARD_PE       = 60
 W_OPTION      = 0.55
 W_TECHNICAL   = 0.25
 W_DIVERSIFY   = 0.20
+W_FUNDAMENTAL = 0.30   # fundamentals bucket (FCF yield + ROE); Goldman: high FCF = margin of safety
 
 # Diversification — score each candidate by correlation to CURRENT holdings.
 # Holdings are read from monitor_output.csv (keeps screener Gateway-free).
@@ -165,6 +166,7 @@ def _c(section, key, default):
 W_OPTION    = _c('weights', 'option', W_OPTION)
 W_TECHNICAL = _c('weights', 'technical', W_TECHNICAL)
 W_DIVERSIFY = _c('weights', 'diversify', W_DIVERSIFY)
+W_FUNDAMENTAL = _c('weights', 'fundamental', W_FUNDAMENTAL)
 MIN_DTE = _c('gates', 'min_dte', MIN_DTE);   MAX_DTE = _c('gates', 'max_dte', MAX_DTE)
 DELTA_MIN = _c('gates', 'delta_min', DELTA_MIN);  DELTA_MAX = _c('gates', 'delta_max', DELTA_MAX)
 MAX_SPREAD_PCT = _c('gates', 'max_spread_pct', MAX_SPREAD_PCT)
@@ -377,7 +379,8 @@ def regime_block(price, tech):
 def get_fundamentals(yf_t):
     f = {'forward_pe': None, 'peg': None, 'roe': None, 'rev_growth': None,
          'div_yield': None, 'payout': None, 'debt_to_equity': None,
-         'current_ratio': None, 'fcf': None, 'quote_type': None, 'sector': None}
+         'current_ratio': None, 'fcf': None, 'market_cap': None, 'fcf_yield': None,
+         'quote_type': None, 'sector': None}
     try:
         info = yf_t.info or {}
         f['sector']         = info.get('sector')
@@ -390,6 +393,9 @@ def get_fundamentals(yf_t):
         f['debt_to_equity'] = info.get('debtToEquity')
         f['current_ratio']  = info.get('currentRatio')
         f['fcf']            = info.get('freeCashflow')
+        f['market_cap']     = info.get('marketCap')
+        if f['fcf'] and f['market_cap']:
+            f['fcf_yield']  = f['fcf'] / f['market_cap'] * 100.0   # FCF yield %, can be negative
         f['quote_type']     = info.get('quoteType')
     except Exception:
         pass
@@ -760,6 +766,7 @@ def screen_ticker(ticker, iv_hist_df, holdings_returns, verbose=True, div_collec
                 'div_corr':    div_corr,
                 'div_score':   div_score,
                 'fwd_pe':      round(fund['forward_pe'], 1) if fund.get('forward_pe') else None,
+                'fcf_yield':   round(fund['fcf_yield'], 2) if fund.get('fcf_yield') is not None else None,
                 'roe':         round(fund['roe'], 3) if fund.get('roe') else None,
                 'bb_z':        round(tech['bb_z'], 2) if tech.get('bb_z') is not None else None,
                 '_rsi':        tech.get('rsi'),
@@ -851,10 +858,24 @@ def score_candidates(df, iv_hist_df):
     df['score_diversify'] = (pd.to_numeric(df['div_score'], errors='coerce')
                              if 'div_score' in df.columns else np.nan)
 
+    # ---- Fundamentals bucket (FCF yield = "margin of safety" per Goldman; blended w/ ROE) ----
+    fund_parts = []
+    if 'fcf_yield' in df.columns:
+        fy = pd.to_numeric(df['fcf_yield'], errors='coerce')
+        if fy.notna().any():
+            fund_parts.append(_pct_rank(fy, True))       # higher FCF yield -> higher score
+    if 'roe' in df.columns:
+        roe = pd.to_numeric(df['roe'], errors='coerce')
+        if roe.notna().any():
+            fund_parts.append(_pct_rank(roe, True))
+    df['score_fundamental'] = (pd.concat(fund_parts, axis=1).mean(axis=1)
+                               if fund_parts else np.nan)
+
     # ---- Weighted composite (renormalize over available buckets) ----
     buckets = [('score_option', W_OPTION),
                ('score_technical', W_TECHNICAL),
-               ('score_diversify', W_DIVERSIFY)]
+               ('score_diversify', W_DIVERSIFY),
+               ('score_fundamental', W_FUNDAMENTAL)]
 
     def _composite(row):
         num = den = 0.0
@@ -866,7 +887,7 @@ def score_candidates(df, iv_hist_df):
         return round(num / den, 1) if den > 0 else np.nan
 
     df['score'] = df.apply(_composite, axis=1)
-    for c in ('score_option', 'score_technical', 'score_diversify'):
+    for c in ('score_option', 'score_technical', 'score_diversify', 'score_fundamental'):
         df[c] = df[c].round(1)
     return df
 
@@ -884,7 +905,7 @@ def main():
           f"spread<{int(MAX_SPREAD_PCT*100)}% | OI>={MIN_OPEN_INTEREST} | "
           f"regime={REGIME_MODE} | solvency+fundamentals (equities)")
     print(f"Score: option {int(W_OPTION*100)}% / technical {int(W_TECHNICAL*100)}% "
-          f"/ diversify {int(W_DIVERSIFY*100)}%   |   "
+          f"/ diversify {int(W_DIVERSIFY*100)}% / fundamental {int(W_FUNDAMENTAL*100)}%   |   "
           f"sizing: {int(MAX_RISK_PCT*100)}% risk on ${ACCOUNT_SIZE:,.0f} "
           f"({int(ASSUMED_DRAWDOWN*100)}% drawdown, acct: {acct_src})")
     print("=" * 74)

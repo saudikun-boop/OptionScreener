@@ -419,6 +419,7 @@ def main():
     stock_prices = {t: get_stock_price(t)
                     for t in sorted({p.contract.symbol for p in all_opts})}
     earn_dates = {t: S.get_next_earnings(yf.Ticker(t)) for t in stock_prices}
+    div_yields = {t: (S.get_fundamentals(yf.Ticker(t)) or {}).get('div_yield') for t in stock_prices}
 
     for pos in all_opts:
         c          = pos.contract
@@ -461,6 +462,8 @@ def main():
         # Exposure = max loss at the -X% stop for short puts: strike * X% * 100 * |qty|
         exposure = (round(strike * S.ASSUMED_DRAWDOWN * 100 * abs(qty))
                     if (right == 'P' and qty < 0) else None)
+        collateral = (round(strike * 100 * abs(qty))      # cash-secured collateral for short puts
+                      if (right == 'P' and qty < 0) else None)
 
         # Per-leg close triggers (only apply profit target to short legs)
         leg_reasons = []
@@ -470,6 +473,7 @@ def main():
             leg_reasons.append(f"{dte} DTE ≤ {HARD_CLOSE_DTE}")
 
         e = earn_dates.get(ticker)
+        dy = div_yields.get(ticker)
         rows.append({
             'ticker':       ticker,
             'type':         right,
@@ -479,7 +483,9 @@ def main():
             'earnings':     str(e) if e else None,
             'strike':       strike,
             'stock':        round(stock, 2) if stock else None,
+            'div_yield':    round(dy, 2) if dy else None,
             'money':        money,
+            'collateral':   collateral,
             'exposure':     exposure,
             'qty':          qty,
             'entry':        round(avg_cost, 2) if avg_cost else None,
@@ -540,8 +546,8 @@ def main():
           .reset_index(drop=True))
 
     # Reorder columns for readability
-    df = df[['ticker', 'combo', 'type', 'expiry', 'dte', 'earnings', 'strike', 'stock', 'money',
-             'qty', 'entry', 'current', 'pnl_%', 'exposure', 'action', 'reason']]
+    df = df[['ticker', 'combo', 'type', 'expiry', 'dte', 'earnings', 'strike', 'stock', 'div_yield',
+             'money', 'qty', 'entry', 'current', 'pnl_%', 'collateral', 'exposure', 'action', 'reason']]
 
     print("=" * 90)
     print("POSITION MONITOR")
