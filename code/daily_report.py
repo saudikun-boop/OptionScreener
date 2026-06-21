@@ -64,18 +64,20 @@ _SCR_ORDER = ['ticker', 'sleeve', 'type', 'stock_price', 'strike', 'otm_%', 'exp
               'earnings', 'mid', 'spread_pct', 'open_int', 'volume', 'delta', 'theta', 'iv_hv',
               'ann_ret_pct', 'score', 'score_option', 'score_technical', 'score_diversify',
               'score_fundamental', 'collat_ct', 'risk_ct', 'income', 'lots', 'div_corr',
-              'div_score', 'fwd_pe', 'fcf_yield', 'roe', 'bb_z', '_rsi', '_bb_pctb',
-              '_support_margin', 'div_yield', 'iv_rank', 'iv_src', 'iv_pct', 'hv_pct']
+              'div_score', 'fwd_pe', 'roe', 'rev_growth', 'debt_to_equity', 'current_ratio',
+              'bb_z', '_rsi', '_bb_pctb', '_support_margin', 'div_yield', 'iv_rank', 'iv_src',
+              'iv_pct', 'hv_pct']
 _SCR_RENAME = {'spread_pct': 'spread%', 'ann_ret_pct': 'ann_ret%', 'iv_pct': 'iv%',
-               'hv_pct': 'hv%', '_bb_pctb': '%B', 'fcf_yield': 'fcf_yield%',
+               'hv_pct': 'hv%', '_bb_pctb': '%B',
                '_support_margin': 'support_margin', '_rsi': 'rsi',
+               'rev_growth': 'rev_gr', 'debt_to_equity': 'd/e', 'current_ratio': 'curr_r',
                'score_option': 'sc_opt', 'score_technical': 'sc_tech',
                'score_diversify': 'sc_dvsfy', 'score_fundamental': 'sc_fund'}
 
 
 def _screener_view(df):
     """Reorder / rename / clean the screener columns for the Excel tab (drop etf, shorten
-    sleeve, round delta+theta, _pct->%, add fcf_yield%)."""
+    sleeve, round delta+theta, _pct->%)."""
     d = df.copy()
     if 'etf' in d.columns:
         d = d.drop(columns=['etf'])

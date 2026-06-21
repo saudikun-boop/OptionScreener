@@ -379,8 +379,7 @@ def regime_block(price, tech):
 def get_fundamentals(yf_t):
     f = {'forward_pe': None, 'peg': None, 'roe': None, 'rev_growth': None,
          'div_yield': None, 'payout': None, 'debt_to_equity': None,
-         'current_ratio': None, 'fcf': None, 'market_cap': None, 'fcf_yield': None,
-         'quote_type': None, 'sector': None}
+         'current_ratio': None, 'fcf': None, 'quote_type': None, 'sector': None}
     try:
         info = yf_t.info or {}
         f['sector']         = info.get('sector')
@@ -392,10 +391,7 @@ def get_fundamentals(yf_t):
         f['payout']         = info.get('payoutRatio')
         f['debt_to_equity'] = info.get('debtToEquity')
         f['current_ratio']  = info.get('currentRatio')
-        f['fcf']            = info.get('freeCashflow')
-        f['market_cap']     = info.get('marketCap')
-        if f['fcf'] and f['market_cap']:
-            f['fcf_yield']  = f['fcf'] / f['market_cap'] * 100.0   # FCF yield %, can be negative
+        f['fcf']            = info.get('freeCashflow')   # raw FCF (used by the solvency gate)
         f['quote_type']     = info.get('quoteType')
     except Exception:
         pass
@@ -766,8 +762,10 @@ def screen_ticker(ticker, iv_hist_df, holdings_returns, verbose=True, div_collec
                 'div_corr':    div_corr,
                 'div_score':   div_score,
                 'fwd_pe':      round(fund['forward_pe'], 1) if fund.get('forward_pe') else None,
-                'fcf_yield':   round(fund['fcf_yield'], 2) if fund.get('fcf_yield') is not None else None,
                 'roe':         round(fund['roe'], 3) if fund.get('roe') else None,
+                'rev_growth':  round(fund['rev_growth'], 3) if fund.get('rev_growth') is not None else None,
+                'debt_to_equity': round(fund['debt_to_equity'], 1) if fund.get('debt_to_equity') is not None else None,
+                'current_ratio':  round(fund['current_ratio'], 2) if fund.get('current_ratio') is not None else None,
                 'bb_z':        round(tech['bb_z'], 2) if tech.get('bb_z') is not None else None,
                 '_rsi':        tech.get('rsi'),
                 '_bb_pctb':    tech.get('bb_pctb'),
@@ -858,16 +856,15 @@ def score_candidates(df, iv_hist_df):
     df['score_diversify'] = (pd.to_numeric(df['div_score'], errors='coerce')
                              if 'div_score' in df.columns else np.nan)
 
-    # ---- Fundamentals bucket (FCF yield = "margin of safety" per Goldman; blended w/ ROE) ----
+    # ---- Fundamentals bucket = business QUALITY among gate survivors (health, not cheapness) ----
+    # ROE / revenue growth / current ratio: higher is better; debt-to-equity: lower is better.
     fund_parts = []
-    if 'fcf_yield' in df.columns:
-        fy = pd.to_numeric(df['fcf_yield'], errors='coerce')
-        if fy.notna().any():
-            fund_parts.append(_pct_rank(fy, True))       # higher FCF yield -> higher score
-    if 'roe' in df.columns:
-        roe = pd.to_numeric(df['roe'], errors='coerce')
-        if roe.notna().any():
-            fund_parts.append(_pct_rank(roe, True))
+    for col, higher in [('roe', True), ('rev_growth', True),
+                        ('current_ratio', True), ('debt_to_equity', False)]:
+        if col in df.columns:
+            s = pd.to_numeric(df[col], errors='coerce')
+            if s.notna().any():
+                fund_parts.append(_pct_rank(s, higher))
     df['score_fundamental'] = (pd.concat(fund_parts, axis=1).mean(axis=1)
                                if fund_parts else np.nan)
 

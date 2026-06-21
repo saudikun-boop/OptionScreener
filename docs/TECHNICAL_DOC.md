@@ -195,20 +195,24 @@ score = (Σ weightᵢ · bucketᵢ) / (Σ weightᵢ over available buckets)
 | Option edge | `W_OPTION` | IV Rank, IV/HV, annualized return, theta decay | **Percentile-rank** across candidates (higher = better) |
 | Technical | `W_TECHNICAL` | RSI sweet-spot, Bollinger %B, support cushion | RSI/BB are **direct 0–100**; support is percentile |
 | Diversification | `W_DIVERSIFY` | avg correlation to current holdings | **Absolute** 0–100 (not percentile) |
-| Fundamentals | `W_FUNDAMENTAL` | **FCF yield** (FCF ÷ market cap) + ROE | **Percentile-rank** (higher = better) |
+| Fundamentals | `W_FUNDAMENTAL` | **Quality**: ROE + revenue growth + current ratio + low debt-to-equity | **Percentile-rank** (higher = better) |
 
 *Weights are tunable constants (config.json `weights`); the composite renormalizes so they need
 not sum to 1. Current default is 0.40 / 0.40 / 0.20 / 0.30 (option / technical / diversify /
 fundamental). Check `config.json` for live values.
 
-**Fundamentals components (decision — FCF yield is now scored).** Based on Goldman Sachs' *"The Art
-of Put Selling"*: selling puts on **high-FCF-yield** stocks (top quintile) historically beat the
-index by ~250bps/yr at a higher Sharpe — FCF yield is a "margin of safety" proxy (higher margins,
-deleveraging, cash cushion). So a **fundamentals bucket** ranks candidates by **FCF yield**
-(`freeCashflow ÷ marketCap × 100`) blended with **ROE**, percentile-ranked, higher = better. Note
-fundamentals are *also* still a pass/fail gate (FCF>0, ROE≥8%, growth≥0, fwd P/E≤60); the bucket
-then ranks the survivors by quality. ETFs have no FCF yield → the bucket is skipped and the
-composite renormalizes.
+**Fundamentals components (decision — quality, not cheapness).** The fundamentals **gates** are a
+pass/fail *floor* (FCF>0, ROE≥8%, growth≥0, fwd P/E≤60). On top of that, a **fundamentals bucket**
+*ranks the survivors* by **business quality**: percentile-rank of **ROE**, **revenue growth**,
+**current ratio** (all higher = better) and **debt-to-equity** (lower = better), averaged.
+
+We first tried scoring **FCF yield** (per Goldman's *Art of Put Selling*, where high-FCF-yield names
+beat the index in a diversified basket). It was **removed** because, for single-name selection, FCF
+yield = FCF ÷ market cap *mechanically rises as price falls*, so it tilts toward beaten-down
+**value traps** (e.g. LULU in a downtrend) — rewarding cheapness rather than health. The quality
+composite rewards genuinely strong companies you'd be content to own if assigned. ETFs have no
+fundamentals → the bucket is skipped and the composite renormalizes. (FCF yield as a *strike-target*
+method — sell premium = N× FCF yield — was discussed but not built.)
 
 **Option-edge components**
 - **IV Rank** — per *ticker* (underlying-level), from the preferred IV source (§4). Same value
@@ -440,7 +444,7 @@ scheduled jobs just connect to the already-running Gateway. (Fuller automation =
 | 15 | Earnings dates | Surfaced as an `earnings` column (screener + monitor), shown as **M/D** in console and Telegram. |
 | 16 | CSV to phone | `daily_report` also **attaches the full CSVs** to Telegram (`sendDocument`) so detail is openable on the phone without screen-width limits. |
 | 17 | Universe | Expanded S&P 100 → + Dow & Nasdaq-100 names (liquid, optioned); ~149 equities + 9 ETFs. |
-| 18 | Fundamentals scored | Added a **4th bucket — FCF yield + ROE** (weight 0.30) per Goldman's *Art of Put Selling* (high FCF yield = margin of safety, +250bps/yr historically). Fundamentals remain a gate too. |
+| 18 | Fundamentals scored | Added a **4th bucket — business quality** (ROE + rev growth + current ratio + low debt, weight 0.30) ranking gate-survivors. FCF-yield scoring was tried (Goldman) then **removed**: as FCF÷mktcap it rises as price falls, tilting toward value traps (single-name vs basket). |
 | 19 | Live-quote gate | `require_quote` (default on): a contract needs a real **bid & ask** — no-bid puts aren't sellable and their IV would come from a stale last price. |
 | 20 | Dividend watchlist | Ungated `dividends.csv` — top dividend *stocks* by yield, captured before the gates (high yielders surface even when not tradable). Fixed a 100× yield bug. |
 
@@ -465,8 +469,8 @@ scheduled jobs just connect to the already-running Gateway. (Fuller automation =
 | `ann_ret_pct` | Annualized return on collateral, % |
 | `lots` | Recommended contracts under the 3%/15% sizing |
 | `div_corr` | Avg correlation to current holdings (−1..+1) |
-| `fcf_yield` (shown `fcf_yield%`) | Free cash flow ÷ market cap, % (fundamentals-bucket input) |
-| `score_option`/`score_technical`/`score_diversify`/`score_fundamental` | Bucket scores 0–100 |
+| `roe`, `rev_growth`, `debt_to_equity`, `current_ratio` | Quality inputs to the fundamentals bucket |
+| `score_option`/`score_technical`/`score_diversify`/`score_fundamental` | Bucket scores 0–100 (fundamental = quality) |
 | `score` | Weighted composite (the ranking key) |
 | `sleeve` | Diversification sleeve (asset class / sector) |
 

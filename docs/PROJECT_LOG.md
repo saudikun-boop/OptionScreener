@@ -1008,6 +1008,61 @@ v1.4) command examples → `code\` + a project-layout note.
 
 ## Entry 023 — 2026-06-20
 
+### Fundamentals→quality bucket, dividend watchlist, require-quote gate, Excel layout, monitor collateral/div
+(Consolidated — an earlier copy of this entry didn't persist to disk.)
+
+**Dividend yield 100× fix + ungated watchlist.** yfinance now returns `dividendYield` as a percent;
+code still ×100 (TLT showed 455%). Fixed. Added an **ungated dividend watchlist**: `screen_ticker`
+captures each stock's yield via a `div_collector` BEFORE the gates, so high-yield names knocked out
+by earnings/liquidity (USB, VZ, PFE, PEP…) still surface. Writes `reports/dividends.csv`; Telegram
+`DIVIDENDS` section + console block + Excel `Dividends` tab; ETFs excluded; `report.top_dividends`.
+
+**require_quote gate.** GILD showed 43% IV on a strike with **no bids** (IV back-solved from a stale
+last; not sellable). Added `gates.require_quote` (default **true**) — a contract needs a live bid &
+ask. Pre-market/weekend runs return few/none → set false for those. (Discussed: per-strike OTM-put
+IV reflects skew and is expected to exceed IBKR's ATM IV.)
+
+**Reports auto-cleanup.** Each run deletes prior `daily_report_*.xlsx` / `.csv` (keep only latest).
+
+**Screener Excel field layout** (`daily_report._screener_view`, per user's Sheet1): reordered,
+**dropped `etf`**, **shortened sleeve**, rounded delta/theta to 3, `_pct`→`%`, short score names
+(`sc_opt/sc_tech/sc_dvsfy/sc_fund`), stripped leading `_` (`rsi`, `support_margin`), **auto-fit
+column widths** + **freeze panes B2**. Raw CSV keeps original names so report code/cloud still read it.
+
+**Monitor: collateral + dividend yield.** Added `collateral` (strike×100×|qty|) and `div_yield`
+columns to the monitor table (console + Excel Monitor tab).
+
+**Fundamentals scoring — added FCF-yield bucket, then pivoted to QUALITY.** First implemented a 4th
+bucket scoring **FCF yield** (Goldman *Art of Put Selling*: high FCF yield = margin of safety,
++250bps/yr in a basket), weight 0.30. Then, after the user flagged the **value-trap** problem (FCF
+yield = FCF ÷ market cap *rises as price falls*, so it tilts toward beaten-down names like LULU; the
+Goldman result is basket-level, not single-name), **removed FCF yield entirely** and replaced it with
+a **business-QUALITY composite**: percentile-rank of **ROE + revenue growth + current ratio +
+(low) debt-to-equity**, averaged. Gates stay the quality floor; the bucket ranks survivors by health.
+Weight 0.30 (`weights.fundamental`). Tested: STRONG 92 / MID 58 / WEAK 25.
+
+**Discussions logged:** GILD IV skew (per-strike vs ATM) and downtrend news (M&A-driven 2026 EPS
+cut); the Goldman **FCF-yield strike-target** method (premium = N× FCF yield; NVDA at 0.91% → very
+deep-OTM strikes; the high Sharpe comes from low-vol consistency + optional leverage, *not* selling
+more lots); value-trap critique → the quality pivot above.
+
+### config.json
+`weights.fundamental` 0.30 · `gates.require_quote` true · `report.top_dividends` 3.
+
+### Progress
+- [x] Dividend 100× fix + ungated watchlist (csv + Telegram + Excel + console)
+- [x] require_quote gate; reports auto-cleanup; screener Excel field layout (widths/freeze/short names)
+- [x] Monitor collateral + dividend yield
+- [x] Fundamentals bucket → **business-quality composite** (FCF yield removed); tested
+- [x] Docs: TECHNICAL_DOC updated for quality bucket + all the above
+- [ ] Docs: regenerate Word guide → v6 for the quality pivot (offered)
+- [ ] User: commit `code/ config.json docs`; re-run during market hours to verify
+- [ ] Pending: trend penalty (avoid slow-bleed value traps); IV/HV shorter-HV; short-call roll engine; calls/combos rolls; Phase 2 VM
+
+---
+
+## Entry 023 — 2026-06-20
+
 ### Fundamentals (FCF-yield) bucket, dividend watchlist, require-live-quote gate, field layout
 
 **Fundamentals scoring bucket (Goldman "art of put selling").** User shared the GS paper: selling
