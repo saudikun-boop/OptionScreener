@@ -11,6 +11,7 @@ result[].message.chat.id  (or message @userinfobot).
 """
 
 import os
+import re
 import json
 import html
 
@@ -72,6 +73,12 @@ def mono(table_str):
     return "<pre>" + html.escape(table_str) + "</pre>"
 
 
+def _plain(s):
+    """Strip HTML tags + unescape entities — used as a safe fallback so a chunk never
+    fails to deliver (or renders broken/red) because of malformed HTML."""
+    return html.unescape(re.sub(r'<[^>]+>', '', s))
+
+
 def send_telegram(text, token=None, chat=None):
     token = token or _creds()[0]
     chat = chat or _creds()[1]
@@ -80,16 +87,29 @@ def send_telegram(text, token=None, chat=None):
               "or create telegram_config.json. (Message not sent.)")
         return False
     ok = True
+    carry_open = False                       # a <pre> left open by the previous chunk
     for chunk in _chunks(text):
+        if carry_open:
+            chunk = "<pre>" + chunk
+        # Guarantee balanced <pre> in THIS message: if a split cut a block, close it here
+        # (and reopen at the top of the next chunk). Unbalanced <pre> is what renders red.
+        carry_open = chunk.count("<pre>") > chunk.count("</pre>")
+        if carry_open:
+            chunk = chunk + "</pre>"
         try:
             r = requests.post(_API.format(token=token),
                               data={'chat_id': chat, 'text': chunk,
                                     'parse_mode': 'HTML',
                                     'disable_web_page_preview': True},
                               timeout=20)
-            if r.status_code != 200:
-                print("Telegram error:", r.status_code, r.text[:300])
-                ok = False
+            if r.status_code != 200:         # HTML parse error → resend as plain text (never red, never lost)
+                print("Telegram HTML error:", r.status_code, r.text[:200], "→ retrying as plain text")
+                r = requests.post(_API.format(token=token),
+                                  data={'chat_id': chat, 'text': _plain(chunk)[:_MAX],
+                                        'disable_web_page_preview': True}, timeout=20)
+                if r.status_code != 200:
+                    print("Telegram plain retry failed:", r.status_code, r.text[:200])
+                    ok = False
         except Exception as e:
             print("Telegram send failed:", e)
             ok = False
