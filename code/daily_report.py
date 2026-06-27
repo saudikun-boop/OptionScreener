@@ -131,6 +131,15 @@ def fmt_monitor():
         lines.append(f"{x['ticker']} {x['strike']:g}{x['type']} {int(x['dte'])}d "
                      f"{money} {pnl_s} {a}{e_s}")
     out = "<b>MONITOR — action</b>\n" + notify.mono("\n".join(lines))
+    # Book totals (over all positions)
+    ent = pd.to_numeric(df.get('entry'), errors='coerce')
+    cur = pd.to_numeric(df.get('current'), errors='coerce')
+    q = pd.to_numeric(df.get('qty'), errors='coerce')
+    if ent is not None and q is not None and q.notna().any():
+        prem = (ent * 100 * q.abs()).where(q < 0).sum()
+        pnl = ((cur - ent) * 100 * q).sum()
+        pct = f" ({pnl / prem * 100:+.0f}%)" if prem else ""
+        out += f"\nPremium collected: ${prem:,.0f}  |  Open P&amp;L: ${pnl:,.0f}{pct}"
     if 'exposure' in df.columns:
         tot = int(pd.to_numeric(df['exposure'], errors='coerce').dropna().sum())
         out += f"\nExposure (max loss at stop): ${tot:,}"

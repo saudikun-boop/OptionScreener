@@ -565,6 +565,17 @@ def main():
     long_ct  = (df['qty'] > 0).sum()
     print(f"\n→ Close: {close_ct}   Roll?: {roll_ct}   Hold: {hold_ct}   (Long/hedge legs: {long_ct})")
 
+    # Book totals: premium collected at open (credit on short legs), current open P&L $ and %
+    ent = pd.to_numeric(df['entry'], errors='coerce')
+    cur = pd.to_numeric(df['current'], errors='coerce')
+    q   = pd.to_numeric(df['qty'], errors='coerce')
+    premium_open = (ent * 100 * q.abs()).where(q < 0).sum()        # credit received opening shorts
+    pnl_dollar = ((cur - ent) * 100 * q).sum()                     # signed unrealized P&L
+    pnl_pct = (pnl_dollar / premium_open * 100) if premium_open else None
+    print(f"→ Premium collected (open): ${premium_open:,.0f}")
+    pct_s = f" ({pnl_pct:+.0f}% of premium)" if pnl_pct is not None else ""
+    print(f"→ Open P&L: ${pnl_dollar:,.0f}{pct_s}")
+
     total_exp = int(df['exposure'].dropna().sum()) if 'exposure' in df.columns else 0
     dd = int(S.ASSUMED_DRAWDOWN * 100)
     if nlv:
