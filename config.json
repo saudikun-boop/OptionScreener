@@ -16,7 +16,7 @@
 
   "sizing":   { "account_size_fallback": 700000, "max_risk_pct": 0.03, "assumed_drawdown": 0.15 },
 
-  "monitor":  { "profit_target_pct": 0.70, "hard_close_dte": 21, "near_atm_buffer": 0.03, "roll_top_n": 3 },
+  "monitor":  { "profit_target_pct": 0.70, "hard_close_dte": 14, "near_atm_buffer": 0.03, "roll_top_n": 3 },
 
   "covered_calls": { "delta_min": 0.15, "delta_max": 0.25, "w_option": 0.6, "w_resist": 0.4,
                      "resist_window": 20, "long_high_days": 63, "long_high_bonus": 6.0,
