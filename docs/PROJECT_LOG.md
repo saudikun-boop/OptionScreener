@@ -1114,3 +1114,58 @@ prior turns, in place).
 - [ ] Pending: IV/HV shorter-HV tweak; short-call roll engine; calls/combos rolls; Phase 2 VM
 
 ---
+
+## Entry 024 — 2026-06-28 — Backtest build + factor validation (fundamental weight → 0)
+
+Built **`code/backtest.py`**: a free, point-in-time-ish backtest of the cash-secured-put strategy
+to answer "does selecting by our score beat *not* selecting?" before tuning weights. Design (all
+reuse `screener.py` so we test the model we trade): monthly cycles, **hold-to-expiry** (so no option
+price path needed), ~0.20Δ 1-month puts, **premium simulated** via Black-Scholes at **IV = HV×1.15**
+(we have no free historical option prices), **mid fills − $0.65/contract**. Streams compared per
+cycle: ScoreTopN / ScoreBotN / EqualWeight(whole pool) / QQQ / SPY, plus technical-score quintiles,
+(biased) quality quintiles, and an **assignment-rate & loss-when-breached** diagnostic. Runs on the
+PC (Yahoo blocked from the sandbox); self-tested on synthetic GBM data here (delta-target lands mean
+|Δ|≈0.21; no fake edge on random data — harness isn't rigged).
+
+**Honest caveats baked in:** premiums are modeled from HV×VRP, so the **option-edge bucket can't be
+tested here** (IV/HV is ~constant by construction; needs real IV); **survivorship bias** (today's
+universe); no real bid/ask/OI/earnings → those gates not applied. Trust *relative* gaps, not absolute CAGR.
+
+### The finding (192 monthly cycles, 2010→2026; 27,209 simulated trades)
+- **Headline looked like "score works"** — ScoreTopN 6.4% CAGR vs EqualWeight 3.9% (edge +0.21%/cycle)
+  — but two tells killed that read: **ScoreBotN ≈ ScoreTopN** (6.1%) and the **score quintiles are a
+  smile, not a staircase** (extremes beat the middle). That's the fingerprint of sorting on
+  volatility/premium size, not directional skill. (QQQ/SPY 19.8%/14.6% >> all CSP streams — an unfair
+  comp: cash-secured, capped upside, historic bull, premiums understated w/o skew. Not the point.)
+- **Decisive test — does the score do its actual job (fewer/smaller assignments)?**
+  - **TECHNICAL score: validated as a risk filter.** Assignment rate falls **monotonically 16.7%→13.7%**
+    (Q1→Q5), ~18% relative fewer assignments. Premium yield is **flat** across quintiles (1.18–1.32%),
+    so this is **not** a vol artifact — it's a genuine oversold / Bollinger-low mean-reversion timing
+    effect. Catch: high-score names breach slightly **deeper** when they do break (falling-knife tax),
+    so keep the **breakdown gate** alongside oversold. Value = risk smoothing (fewer wheel-ins), not return.
+  - **QUALITY bucket: failed even its rigged test.** Assignment rate **flat** (~15–16%, no gradient),
+    breach depth **deeper** at Q5 (4.81%→7.40%), and premium yield **~doubles** Q1→Q5 (1.00%→1.89%).
+    So our "quality" (ROE + rev-growth + low debt) is a **stealth high-volatility / high-beta growth
+    tilt** — its earlier monotone *return* was just premium-for-vol, not safety. Survivorship bias
+    flatters long-run return, not a 1-month breach, so the biased test couldn't rescue it.
+
+### Conclusion & action
+Fundamentals belong as a **GATE** (solvency / distress / post-assignment tail protection), **not a
+scoring weight**. Promoting them to a 0.30 weight had quietly added a high-vol bet. **Set
+`weights.fundamental` 0.30 → 0.00** (screener renormalizes to option .40 / technical .40 / diversify
+.20; the fundamentals *gate* stays on). Matches external research the user noted: chasing premium /
+high-vol underlyings underperforms; **low-vol names work better for option selling**.
+
+**Next factor to test:** a **low-volatility / stability tilt** (inverse of growth-quality) as a
+possible replacement fundamental score — measured on assignment rate, not raw return.
+
+### Progress
+- [x] `code/backtest.py` built, self-tested (synthetic), math verified (Δ-target, BS P&L, metrics)
+- [x] Assignment & loss-when-breached by quintile diagnostic (in script + run on real trades)
+- [x] Validated technical bucket = assignment-avoidance filter (16.7%→13.7%, premium-flat)
+- [x] Diagnosed quality bucket as a disguised high-vol tilt → **`weights.fundamental` set to 0.00**
+- [ ] User: commit (`config.json`, `code/backtest.py`); re-run backtest to refresh CSVs
+- [ ] Docs: update TECHNICAL_DOC §5.3 + Word guide — fundamentals = gate (weight 0), add this finding
+- [ ] Optional next: prototype low-vol factor; walk-forward weight tuning; option-edge test on real-IV window
+
+---
