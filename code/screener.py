@@ -821,16 +821,17 @@ def score_candidates(df, iv_hist_df):
                                   errors='coerce').round(1)
     df['iv_src']  = df['ticker'].map(lambda t: rank_map[t][1])
 
-    # ---- Option-edge bucket ----
+    # ---- Option-edge bucket = premium RICHNESS, not raw premium size ----
+    # Evidence (data/iv_history.csv, 1yr / 157 names): IV/HV falls from ~1.26 at low vol
+    # to ~0.93 at high vol — so raw premium (ann_ret, |theta|) is just a volatility proxy
+    # that tilts the score toward the high-vol / negative-VRP trap. We rank on richness
+    # only: IV Rank (IV vs its own history) + IV/HV (IV vs realized). ann_ret_pct & theta
+    # are kept as DISPLAY columns but intentionally excluded from the score.
     opt_parts = []
     if df['iv_rank'].notna().any():
         opt_parts.append(_pct_rank(df['iv_rank'], True))
     if df['iv_hv'].notna().any():
         opt_parts.append(_pct_rank(df['iv_hv'], True))
-    if df['ann_ret_pct'].notna().any():
-        opt_parts.append(_pct_rank(df['ann_ret_pct'], True))
-    if df['theta'].notna().any():
-        opt_parts.append(_pct_rank(df['theta'].abs(), True))
     df['score_option'] = (pd.concat(opt_parts, axis=1).mean(axis=1)
                           if opt_parts else np.nan)
 
