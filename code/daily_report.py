@@ -60,7 +60,7 @@ def _ab(sleeve):
 
 
 # Column order + names for the Excel "Screener" tab (per the field-layout spec).
-_SCR_ORDER = ['ticker', 'sleeve', 'type', 'stock_price', 'strike', 'otm_%', 'expiry', 'dte',
+_SCR_ORDER = ['ticker', 'sleeve', 'type', 'stock_price', 'strike', 'otm_%', '<200MA', 'expiry', 'dte',
               'earnings', 'mid', 'spread_pct', 'open_int', 'volume', 'delta', 'theta', 'iv_hv',
               'ann_ret_pct', 'score', 'score_option', 'score_technical', 'score_diversify',
               'score_fundamental', 'collat_ct', 'risk_ct', 'income', 'lots', 'div_corr',
@@ -186,9 +186,12 @@ def fmt_screener():
     # Top tickers by best score (variety), then top contracts within each — one compact block
     order = (df.groupby('ticker')['score'].max()
                .sort_values(ascending=False).head(TOP_TICKERS).index.tolist())
+    _rank = {t: i for i, t in enumerate(order)}
     sub = (df[df['ticker'].isin(order)].sort_values('score', ascending=False)
-             .groupby('ticker', as_index=False).head(PER_TICKER)
-             .sort_values(['ticker', 'score'], ascending=[True, False]))
+             .groupby('ticker', as_index=False).head(PER_TICKER))
+    sub = (sub.assign(_r=sub['ticker'].map(_rank))
+              .sort_values(['_r', 'score'], ascending=[True, False])
+              .drop(columns='_r'))
     lines = []
     for _, x in sub.iterrows():
         d = abs(x['delta']) if pd.notna(x.get('delta')) else 0
@@ -197,10 +200,13 @@ def fmt_screener():
         ann_s = f"{ann:.0f}%" if pd.notna(ann) else "—"
         e = x.get('earnings')
         e_s = f" E{_md(e)}" if pd.notna(e) and str(e) not in ('', 'nan') else ""
+        flag = '*' if str(x.get('<200MA', '')).strip() == '*' else ''
         lines.append(f"{str(x['ticker']):<5} {x['strike']:g}P {int(x['dte'])}d "
-                     f"Δ{d_s} {ann_s} s{x['score']:.0f}{e_s}")
+                     f"Δ{d_s} {ann_s} s{x['score']:.0f}{flag}{e_s}")
     # One aligned monospace block, like the other sections (chunking keeps it intact).
-    out = [f"<b>SCREENER</b> — {len(df)} candidates · top {len(order)} names\n"
+    any_flag = (df.get('<200MA').astype(str).str.strip() == '*').any() if '<200MA' in df.columns else False
+    legend = " · * = below falling 200-MA" if any_flag else ""
+    out = [f"<b>SCREENER</b> — {len(df)} candidates · top {len(order)} names{legend}\n"
            + notify.mono("\n".join(lines))]
     if 'sleeve' in df.columns:                       # diversification menu (one per sleeve)
         book = (df.groupby('sleeve', as_index=False).head(1)

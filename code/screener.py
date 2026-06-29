@@ -631,6 +631,14 @@ def screen_ticker(ticker, iv_hist_df, holdings_returns, verbose=True, div_collec
     etf  = is_etf(ticker, fund)
     sl   = sleeve(ticker, fund)
 
+    # Slow-downtrend FLAG (not a gate): price below a FALLING 200-MA. These are often
+    # intentional "buy the dip cheap" entries, so we surface them with a '*' in the
+    # <200MA column rather than filtering them out. (Hard gating is opt-in via
+    # regime.block_below_falling_ma.)
+    _ma200, _ma200_slope = tech.get('ma200'), tech.get('ma200_slope')
+    below_falling_ma = bool(_ma200 and _ma200_slope is not None
+                            and price < _ma200 and _ma200_slope < 0)
+
     if div_collector is not None and not etf:            # dividend watchlist — captured BEFORE gates
         _dy = fund.get('div_yield')
         if _dy:
@@ -750,6 +758,8 @@ def screen_ticker(ticker, iv_hist_df, holdings_returns, verbose=True, div_collec
                 'type':        'P',
                 'stock_price': round(price, 2),
                 'otm_%':       otm_pct,
+                '<200MA':      '*' if below_falling_ma else '',   # slow-downtrend flag
+
                 'expiry':      exp_date.strftime('%Y-%m-%d'),
                 'dte':         dte,
                 'earnings':    str(earnings) if earnings else None,
@@ -959,23 +969,27 @@ def main():
     df = score_candidates(df, iv_hist_df)
     df = df.sort_values('score', ascending=False, na_position='last').reset_index(drop=True)
 
-    display_cols = ['ticker', 'type', 'stock_price', 'otm_%', 'expiry', 'dte', 'earnings',
+    display_cols = ['ticker', 'type', 'stock_price', 'otm_%', '<200MA', 'expiry', 'dte', 'earnings',
                     'strike', 'mid',
                     'lots', 'open_int', 'delta', 'iv_pct', 'iv_hv', 'bb_z',
                     'iv_rank', 'iv_src', 'ann_ret_pct', 'div_corr',
                     'score_option', 'score_technical', 'score_diversify', 'score']
     display_cols = [c for c in display_cols if c in df.columns]
 
-    # Top tickers by best score (variety), top contracts each, sorted by ticker then score
+    # Top tickers by best score, top contracts each — groups ordered by each ticker's
+    # HIGHEST score (descending), then by score within each ticker.
     order = (df.groupby('ticker')['score'].max()
                .sort_values(ascending=False).head(REPORT_TOP_TICKERS).index.tolist())
+    _rank = {t: i for i, t in enumerate(order)}
     top = (df[df['ticker'].isin(order)]
              .sort_values('score', ascending=False)
-             .groupby('ticker', as_index=False).head(REPORT_PER_TICKER)
-             .sort_values(['ticker', 'score'], ascending=[True, False]))
+             .groupby('ticker', as_index=False).head(REPORT_PER_TICKER))
+    top = (top.assign(_r=top['ticker'].map(_rank))
+              .sort_values(['_r', 'score'], ascending=[True, False])
+              .drop(columns='_r'))
     print("\n" + "=" * 74)
     print(f"TOP CANDIDATES  ({len(order)} tickers x {REPORT_PER_TICKER}, of {len(df)} total; "
-          f"by ticker, then score)")
+          f"best-scoring ticker first)")
     print("=" * 74)
     print(top[display_cols].to_string(index=False))
 
@@ -984,7 +998,7 @@ def main():
         best = (df.sort_values('score', ascending=False)
                   .groupby('sleeve', as_index=False).head(PER_SLEEVE_TOP)
                   .sort_values('score', ascending=False))
-        sleeve_cols = ['sleeve', 'ticker', 'type', 'stock_price', 'otm_%', 'expiry', 'dte',
+        sleeve_cols = ['sleeve', 'ticker', 'type', 'stock_price', 'otm_%', '<200MA', 'expiry', 'dte',
                        'strike', 'mid', 'lots', 'delta', 'iv_hv',
                        'iv_rank', 'ann_ret_pct', 'div_corr',
                        'score_option', 'score_technical', 'score_diversify', 'score']
