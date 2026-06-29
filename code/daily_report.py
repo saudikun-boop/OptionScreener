@@ -86,6 +86,12 @@ def _screener_view(df):
     for c in ('delta', 'theta'):
         if c in d.columns:
             d[c] = pd.to_numeric(d[c], errors='coerce').round(3)
+    # Group rows so the highest-scoring ticker leads, then by score within each ticker.
+    if 'ticker' in d.columns and 'score' in d.columns:
+        sc = pd.to_numeric(d['score'], errors='coerce')
+        d = d.assign(_tmax=sc.groupby(d['ticker']).transform('max'), _sc=sc)
+        d = (d.sort_values(['_tmax', 'ticker', '_sc'], ascending=[False, True, False])
+               .drop(columns=['_tmax', '_sc']))
     cols = [c for c in _SCR_ORDER if c in d.columns]
     cols += [c for c in d.columns if c not in cols]      # keep any extras at the end
     return d[cols].rename(columns=_SCR_RENAME)

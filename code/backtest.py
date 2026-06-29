@@ -70,6 +70,45 @@ MIN_HV               = 0.05                                   # ignore degenerat
 BENCHMARKS           = ['QQQ', 'SPY']
 
 
+# ── Variance-risk-premium model ────────────────────────────────────────────────
+# Calibrated from data/iv_history.csv (157 names, 1yr IBKR IV+HV): IV/HV falls with
+# vol — ~1.26 at 16% HV down to ~0.93 at 54% HV. Linear fit: IV/HV ≈ 1.40 − 0.87·HV.
+# 'flat' reproduces the old (vol-biased) assumption; 'calibrated' de-biases it.
+def vrp_ratio(hv, mode='flat'):
+    if mode == 'calibrated':
+        return float(np.clip(1.40 - 0.87 * hv, 0.85, 1.45))
+    return VRP_MULT
+
+
+def load_real_iv(path=None):
+    """Real IBKR ATM IV per ticker from iv_history.csv → {ticker: (dates[], ivs[])}."""
+    path = path or os.path.join(S._ROOT, 'data', 'iv_history.csv')
+    try:
+        d = pd.read_csv(path)
+    except Exception:
+        return {}
+    d = d[(d['source'] == 'ibkr')].dropna(subset=['iv'])
+    d = d[d['iv'] > 0].sort_values('date')
+    return {t: (g['date'].astype(str).values, g['iv'].astype(float).values)
+            for t, g in d.groupby('ticker')}
+
+
+def real_iv_lookup(real_iv, ticker, dstr, max_gap=5):
+    """IV on dstr (YYYY-MM-DD) or nearest prior date within max_gap days; else None."""
+    import bisect
+    rec = real_iv.get(ticker) if real_iv else None
+    if not rec:
+        return None
+    dates, ivs = rec
+    i = bisect.bisect_right(dates, dstr) - 1
+    if i < 0:
+        return None
+    d0 = date.fromisoformat(str(dates[i])[:10]); d1 = date.fromisoformat(dstr)
+    if (d1 - d0).days > max_gap:
+        return None
+    return float(ivs[i])
+
+
 # ── Strike helpers ──────────────────────────────────────────────────────────────
 
 def strike_grid_step(s):
@@ -183,8 +222,10 @@ def static_quality(tickers):
 
 # ── Per-cycle trade construction ────────────────────────────────────────────────
 
-def build_cycle(prices, entry_d, expiry_d):
-    """Return a DataFrame of one simulated put per eligible ticker for this cycle."""
+def build_cycle(prices, entry_d, expiry_d, real_iv=None, vrp='flat'):
+    """Return a DataFrame of one simulated put per eligible ticker for this cycle.
+    real_iv: optional {ticker:(dates,ivs)} → price entry premium at REAL IBKR IV when
+    available (else fall back to HV × vrp_ratio(hv, vrp))."""
     rows = []
     T = max((expiry_d - entry_d).days, 1) / 365.0
     for t, df in prices.items():
@@ -201,7 +242,8 @@ def build_cycle(prices, entry_d, expiry_d):
         hv = S.compute_hv(hist, HV_WINDOW)
         if not hv or hv < MIN_HV:
             continue
-        iv = hv * VRP_MULT
+        riv = real_iv_lookup(real_iv, t, e0.date().isoformat()) if real_iv else None
+        iv = riv if riv else hv * vrp_ratio(hv, vrp)     # real IBKR IV when available
         K = delta_target_strike(S0, T, r=RISK_FREE, sigma=iv, target_delta=TARGET_DELTA)
         if not K:
             continue
@@ -214,6 +256,13 @@ def build_cycle(prices, entry_d, expiry_d):
         ret = pnl_share / K                                   # return on cash-secured collateral
         tech = S.compute_technicals(hist)
         swing = tech.get('swing_low_20')
+        # trend filter: is the name in a (slow) downtrend the breakdown gate misses?
+        ma200, slope = tech.get('ma200'), tech.get('ma200_slope')
+        downtrend = bool(ma200 and S0 < ma200 and slope is not None and slope < 0)
+        mom126 = None
+        cl = hist['Close']
+        if len(cl) > 130 and float(cl.iloc[-127]) > 0:
+            mom126 = S0 / float(cl.iloc[-127]) - 1.0     # ~6-month momentum
         rows.append({
             'ticker': t, 'entry': e0.date(), 'expiry': e1.date(),
             'S0': round(S0, 2), 'Sx': round(Sx, 2), 'strike': K,
@@ -221,6 +270,10 @@ def build_cycle(prices, entry_d, expiry_d):
             'premium': round(prem, 3), 'ret': ret, 'assigned': Sx < K,
             'rsi': tech.get('rsi'), 'bb_pctb': tech.get('bb_pctb'), 'bb_z': tech.get('bb_z'),
             'support_margin': ((swing - K) / S0) if swing else None,
+            'hv': round(hv, 4),                      # realized vol — low-vol factor lens
+            'iv_used': round(iv, 4), 'real_iv': riv is not None,
+            'ivhv': round(iv / hv, 3),               # richness (option-edge); meaningful with --real-iv
+            'downtrend': downtrend, 'mom126': round(mom126, 3) if mom126 is not None else None,
         })
     cyc = pd.DataFrame(rows)
     if cyc.empty:
@@ -243,6 +296,10 @@ def build_cycle(prices, entry_d, expiry_d):
         cyc['score_q'] = pd.qcut(cyc['score'].rank(method='first'), 5, labels=[1, 2, 3, 4, 5])
     else:
         cyc['score_q'] = np.nan
+    if cyc['ivhv'].notna().sum() >= 5:        # cross-sectional richness quintile (option-edge)
+        cyc['ivhv_q'] = pd.qcut(cyc['ivhv'].rank(method='first'), 5, labels=[1, 2, 3, 4, 5])
+    else:
+        cyc['ivhv_q'] = np.nan
     return cyc
 
 
@@ -282,14 +339,19 @@ def _fmt(d):
 
 # ── Driver ──────────────────────────────────────────────────────────────────────
 
-def run(start, end, selftest=False, do_quality=True):
+def run(start, end, selftest=False, do_quality=True, use_real_iv=False, vrp='flat'):
     eq = S.EQUITIES
     sd = date.fromisoformat(start)
     ed = date.today() if end == 'today' else date.fromisoformat(end)
     start, end = sd.isoformat(), ed.isoformat()      # resolve 'today' before any fetch
+    real_iv = load_real_iv() if (use_real_iv and not selftest) else None
+    iv_desc = ("real IBKR IV (in window) + HV×%s fallback" % vrp) if real_iv else \
+              ("IV=HV×%.2f" % VRP_MULT if vrp == 'flat' else "IV=HV×calibrated(1.40−0.87·HV)")
     print("=" * 78)
     print(f"BACKTEST  {start} -> {end}  | {'SYNTHETIC' if selftest else 'yfinance'} | "
-          f"~{TARGET_DELTA:.2f}d 1mo puts | IV=HV*{VRP_MULT} | topN={TOP_N}")
+          f"~{TARGET_DELTA:.2f}d 1mo puts | {iv_desc} | topN={TOP_N}")
+    if real_iv:
+        print(f"  real IV loaded for {len(real_iv)} tickers (priced at real IV where available)")
     print("=" * 78)
 
     universe = eq + BENCHMARKS
@@ -313,7 +375,7 @@ def run(start, end, selftest=False, do_quality=True):
     series = []     # one row per cycle
     trades = []     # every simulated trade (for transparency / CSV)
     for entry_d, expiry_d in cycles:
-        cyc = build_cycle(prices, entry_d, expiry_d)
+        cyc = build_cycle(prices, entry_d, expiry_d, real_iv=real_iv, vrp=vrp)
         if cyc.empty:
             continue
         if quality is not None:
@@ -329,6 +391,7 @@ def run(start, end, selftest=False, do_quality=True):
                'SPY': index_return(prices, 'SPY', entry_d, expiry_d)}
         for q in (1, 2, 3, 4, 5):
             row[f'sQ{q}'] = cyc.loc[cyc['score_q'] == q, 'ret'].mean()
+            row[f'ivQ{q}'] = cyc.loc[cyc['ivhv_q'] == q, 'ret'].mean()
             if quality is not None:
                 row[f'qQ{q}'] = cyc.loc[cyc['quality_q'] == q, 'ret'].mean()
         series.append(row)
@@ -346,6 +409,29 @@ def run(start, end, selftest=False, do_quality=True):
     edge = res['ScoreTopN'].mean() - res['EqualWeight'].mean()
     print(f"\n  Selection edge (TopN − EqualWeight), avg/cycle: {edge*100:+.2f}%  "
           f"({'score adds value' if edge > 0 else 'no edge from score'})")
+
+    # ── Selection spread: top − bottom each cycle, cancelling the market move ──
+    # This is the market-NEUTRAL picking metric. Per-month win rate hides selection
+    # (in a down month top & bottom are both red); the spread isolates the pick.
+    print("\n" + "─" * 78)
+    print("SELECTION SPREAD  (top − bottom per cycle → pure picking, market-neutral)")
+    print("─" * 78)
+    print("  signal                  mean/cycle   annualized   cycles-positive (hit rate)")
+
+    def _spread(label, hi, lo):
+        if hi not in res.columns or lo not in res.columns:
+            return
+        sp = (res[hi] - res[lo]).dropna()
+        if len(sp) == 0:
+            return
+        print(f"  {label:<22}  {sp.mean()*100:+6.2f}%      {sp.mean()*1200:+6.1f}%      "
+              f"{(sp > 0).mean()*100:3.0f}%  ({int((sp > 0).sum())}/{len(sp)})")
+
+    _spread('Technical Q5−Q1', 'sQ5', 'sQ1')
+    _spread('Technical TopN−BotN', 'ScoreTopN', 'ScoreBotN')
+    _spread('IV/HV richness Q5−Q1', 'ivQ5', 'ivQ1')
+    if not real_iv:
+        print("  (IV/HV spread is only meaningful with --real-iv; otherwise IV is modeled from HV.)")
 
     print("\n" + "─" * 78)
     print("TECHNICAL-SCORE QUINTILES  (Q1 worst → Q5 best; want monotone ↑ in CAGR)")
@@ -381,8 +467,61 @@ def run(start, end, selftest=False, do_quality=True):
                   f"{ra:7.2f}%        {bd:7.2f}%")
 
     _risk_block('score_q', "ASSIGNMENT & LOSS BY TECHNICAL-SCORE QUINTILE  (want assign% ↓ toward Q5)")
+    _risk_block('ivhv_q', "ASSIGNMENT & LOSS BY IV/HV RICHNESS QUINTILE  (Q5=richest; --real-iv only)")
     _risk_block('quality_q', "ASSIGNMENT & LOSS BY QUALITY QUINTILE  ⚠ BIASED")
     print(f"\n  Overall assignment rate: {all_tr['assigned'].mean()*100:.1f}%  ({len(all_tr)} trades)")
+
+    # ── Low-vol factor lens (V1=lowest realized vol … V5=highest) ──
+    # ⚠ avgRet/CAGR/Sharpe here are CONTAMINATED: premiums are priced at IV=HV*VRP, so
+    # return scales with vol BY CONSTRUCTION (the same artifact that flatters 'quality').
+    # The only model-independent column is breachDepth — and it shows low-vol = shallower
+    # losses-when-breached (the real, tail-control case for a low-vol tilt). Trust that one.
+    if all_tr['hv'].notna().sum() >= 25:
+        all_tr = all_tr.copy()
+        all_tr['volq'] = pd.qcut(all_tr['hv'].rank(method='first'), 5, labels=[1, 2, 3, 4, 5]).astype('Int64')
+        print("\n" + "─" * 78)
+        print("LOW-VOL FACTOR LENS  (V1=low vol → V5=high vol)  ⚠ only breachDepth is model-independent")
+        print("─" * 78)
+        print("  V       n   assign%   breachDepth|assigned     avgRet*   (*VRP-contaminated)")
+        for q in (1, 2, 3, 4, 5):
+            g = all_tr[all_tr['volq'] == q]
+            if g.empty:
+                continue
+            a = g[g['assigned']]
+            bd = a['breach'].mean() * 100 if len(a) else float('nan')
+            print(f"  V{q}  {len(g):>6}   {g['assigned'].mean()*100:5.1f}%        {bd:7.2f}%            {g['ret'].mean()*100:6.2f}%")
+
+    # ── Trend filter: does excluding slow-downtrend names cut the falling-knife tail? ──
+    if 'downtrend' in all_tr.columns and all_tr['downtrend'].notna().any():
+        print("\n" + "─" * 78)
+        print("TREND FILTER  (downtrend = price below a FALLING 200-day MA)")
+        print("─" * 78)
+
+        def _split(g, label):
+            if len(g) == 0:
+                print(f"  {label:<36} (none)"); return
+            a = g[g['assigned']]
+            bd = a['breach'].mean() * 100 if len(a) else float('nan')
+            print(f"  {label:<36} n={len(g):>5}  assign {g['assigned'].mean()*100:4.1f}%  "
+                  f"breach|asgn {bd:5.2f}%  avgRet {g['ret'].mean()*100:+.2f}%")
+
+        _split(all_tr[~all_tr['downtrend']], 'all healthy (not downtrend)')
+        _split(all_tr[all_tr['downtrend']], 'all downtrend')
+        hi = all_tr[all_tr['score_q'].isin([4, 5])]
+        print("  within top-2 technical-score quintiles (the oversold picks):")
+        _split(hi[~hi['downtrend']], '  oversold & healthy')
+        _split(hi[hi['downtrend']], '  oversold & downtrend (knife)')
+
+        base, filt = [], []
+        for c, g in all_tr.groupby('cycle'):
+            gg = g.sort_values('score')
+            base.append(gg.tail(TOP_N)['ret'].mean())
+            h = gg[~gg['downtrend']]
+            filt.append(h.tail(TOP_N)['ret'].mean() if len(h) else np.nan)
+        base = pd.Series(base).dropna(); filt = pd.Series(filt).dropna()
+        print(f"  TopN selection — unfiltered     : {base.mean()*100:+.2f}%/cyc")
+        print(f"  TopN selection — trend-filtered : {filt.mean()*100:+.2f}%/cyc  "
+              f"(downtrend names dropped before ranking)")
 
     # Per-year stability of the headline (relative numbers are what matter)
     print("\n" + "─" * 78)
@@ -410,12 +549,21 @@ def main():
     ap.add_argument('--top', type=int, default=TOP_N)
     ap.add_argument('--selftest', action='store_true')
     ap.add_argument('--no-quality', action='store_true')
+    ap.add_argument('--real-iv', action='store_true',
+                    help='price entry premiums at real IBKR IV (data/iv_history.csv) where available')
+    ap.add_argument('--vrp', choices=['flat', 'calibrated'], default='flat',
+                    help='fallback IV model: flat HV×1.15 or vol-calibrated IV/HV≈1.40−0.87·HV')
     a = ap.parse_args()
     TOP_N = a.top
     if a.selftest:
         run('2015-01-01', '2020-01-01', selftest=True, do_quality=False)
     else:
-        run(a.start, a.end, selftest=False, do_quality=not a.no_quality)
+        # real-iv only has ~1yr of data; default the window to it unless overridden
+        start = a.start
+        if a.real_iv and start == START_DEFAULT:
+            start = '2025-06-01'
+        run(start, a.end, selftest=False, do_quality=not a.no_quality,
+            use_real_iv=a.real_iv, vrp=a.vrp)
 
 
 if __name__ == '__main__':

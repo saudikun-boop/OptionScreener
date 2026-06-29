@@ -459,7 +459,8 @@ def main():
         else:
             money = ''
 
-        # Exposure = max loss at the -X% stop for short puts: strike * X% * 100 * |qty|
+        # Collateral + exposure are cash-secured-PUT concepts (a covered call ties up shares,
+        # not cash) → only short puts get a value; other legs stay blank.
         exposure = (round(strike * S.ASSUMED_DRAWDOWN * 100 * abs(qty))
                     if (right == 'P' and qty < 0) else None)
         collateral = (round(strike * 100 * abs(qty))      # cash-secured collateral for short puts

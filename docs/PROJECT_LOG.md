@@ -1169,3 +1169,76 @@ possible replacement fundamental score — measured on assignment rate, not raw 
 - [ ] Optional next: prototype low-vol factor; walk-forward weight tuning; option-edge test on real-IV window
 
 ---
+
+## Entry 025 — 2026-06-28 — Real-IV validation, option-edge → richness, slow-downtrend flag, ordering
+
+Big session. Extended the backtest, then used **real IBKR IV** to settle the open questions, and made
+three evidence-driven screener changes.
+
+### Backtest additions (`code/backtest.py`)
+- **`--real-iv`**: prices entry premiums at the actual IBKR ATM IV (`data/iv_history.csv`) where it
+  exists, else falls back to HV×VRP. **`--vrp calibrated`**: vol-dependent fallback IV/HV ≈
+  1.40 − 0.87·HV (fit from the data) so the long-history sim stops rewarding vol artificially.
+- **Assignment-rate & loss-when-breached by quintile** (score, IV/HV richness, quality, vol).
+- **Low-vol lens** (HV quintiles) — breachDepth is the one model-independent column.
+- **Selection spread** (top − bottom quintile per cycle, + hit rate) — the *market-neutral* picking
+  metric, since per-month win rate hides selection (in a down month top & bottom are both red).
+- **IV/HV richness quintile** (cross-sectional) — testable now that real IV is available.
+- **Trend filter**: per-trade `downtrend` flag (price < a *falling* 200-MA) + a healthy-vs-downtrend
+  assignment/breach split and a trend-filtered-TopN comparison.
+
+### THE key finding — variance risk premium falls with vol (real IV, 39k ticker-days)
+IV/HV by realized-vol bucket: **1.26 (low vol) → 1.19 → 1.11 → 1.02 → 0.93 (high vol)**; forward
+(IV vs realized ~1mo) 1.13 → 0.98. So **low-vol names sell at IV well above realized (rich edge);
+the highest-vol names have *negative* VRP (underpaid for the tail).** Overall median IV/HV ≈ 1.06–1.10
+(not the flat 1.15 the sim assumed). This is the clean, model-independent proof that:
+(a) the earlier sim's "high-vol wins" was an artifact of the flat-premium assumption, and
+(b) **chasing premium / high-vol underlyings is a trap; low-vol pays better risk-adjusted premium** —
+matching the external research the user cited.
+
+### Change 1 — option-edge bucket = richness only (`screener.py`)
+Dropped **`ann_ret` and `theta`** from `score_option` (kept as display columns). They measure *raw
+premium size* = a volatility proxy that tilts toward the high-vol/negative-VRP trap. Bucket now ranks
+on **IV Rank + IV/HV** (premium *per unit of risk*). Justified by the VRP structure above.
+
+### Change 2 — slow-downtrend: FLAG, not gate
+Built a falling-200-MA gate and tested it. Backtest confirmed the mechanism: **downtrend names assign
+more (27% vs 22%), breach deeper (7.1% vs 5.1%), and lose money on average (−0.41%)**; worst cell =
+*oversold AND downtrend* (the falling knife). BUT in the 1-yr bull window only 9.5% were downtrend and
+filtering them helped ~nil (tail insurance for corrections, not this regime). **User trades these dips
+intentionally**, so per their call we made it a **FLAG not a filter**: new **`<200MA`** column with a
+`*` marker (console + `screener_output.csv` + Excel Screener tab + Telegram block w/ legend). Hard
+gating is opt-in via `regime.block_below_falling_ma` (default **false**). `code/check_gate.py` added
+(repointed to preview the flag + still-active sharp gates).
+
+### Change 3 — ordering: best-scoring ticker first
+Top-N grouped views (console TOP CANDIDATES, Telegram block, Excel Screener tab) now order groups by
+each **ticker's highest score (descending)**, then by score within the ticker (was alphabetical).
+
+### Real-IV backtest readout (7 cycles — underpowered, one bull regime)
+Selection spreads ≈ 0, hit ~coin-flip → inconclusive on *returns* (7 cycles can't resolve it).
+Assignment 22.2% (honest 0.20Δ; the earlier 16-yr 15.7% was flattered by bull drift + inflated-IV
+strikes placed too far OTM). Per-trade win 81% (the per-*month* win rate was the misleading metric).
+Lesson reinforced: **lean on cross-sectional structure (lots of data), not 7 cycles of realized returns.**
+
+### Notes / caveats
+- IV history = 1 year / one (bull) regime; real return-based validation needs more history (keep the
+  IBKR updater running) or paid data.
+- Sandbox **mount truncation** repeatedly served stale/truncated copies of edited files (backtest.py,
+  screener.py, PROJECT_LOG) → false "SyntaxError"/"file not found"/missing-entry. Resolution as before:
+  trust the Read tool (host) + validate logic in isolation; **the user runs on the PC**.
+
+### config.json
+`weights.fundamental` 0.00 (prior entry) · `regime.block_below_falling_ma` **false** (flag, not gate).
+
+### Progress
+- [x] Real-IV + calibrated-VRP modes; spread / IV-HV / low-vol / trend diagnostics in backtest.py
+- [x] VRP-falls-with-vol finding (39k ticker-days) → validates low-vol/richness, kills the sim artifact
+- [x] Option-edge → richness only (dropped ann_ret/theta)
+- [x] Slow-downtrend `<200MA` flag (not gate) across all outputs; `check_gate.py`
+- [x] Best-scoring-ticker-first ordering (console + Telegram + Excel)
+- [x] Docs: TECHNICAL_DOC + Word guide updated this session
+- [ ] User: commit all (`code/`, `config.json`, `docs/`); re-run `--real-iv` after more IV history accrues
+- [ ] Optional next: explicit low-vol factor (test, then weight); walk-forward weight tuning; Phase 2 VM
+
+---

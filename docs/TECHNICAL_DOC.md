@@ -169,6 +169,16 @@ A stock that fell months ago and is now basing (vol back to normal) passes throu
 price<200-MA), `'score'`/`'off'` (no gate). The old `downtrend_slope`/`new_low_tol` knobs are
 retired (still accepted but unused).
 
+**Slow downtrend — FLAG by default, gate optional (added 2026-06-28).** The sharp-breakdown gate
+misses a *slow grind* lower — a name quietly below a **falling 200-MA** (price < 200-MA **and** the
+200-MA itself sloping down over ~1 month). Backtest (`--real-iv`) showed such names assign more (27%
+vs 22%) and breach deeper (7.1% vs 5.1%), worst of all when *oversold AND* downtrending (the falling
+knife). But these are often **intentional "buy the dip cheap" entries**, so the default is to **flag,
+not filter**: the screener emits a **`<200MA`** column marked `*` (console, `screener_output.csv`,
+Excel Screener tab, Telegram block w/ legend) and keeps the name in the results. Set
+`regime.block_below_falling_ma: true` to turn it into a hard gate instead (default `false`).
+`code/check_gate.py` previews today's flagged names (and the still-active sharp gates).
+
 **Oversold flag (Bollinger z-score).** Deep oversold is an *opportunity* for a mean-reverting put
 seller (rich premium + bounce potential), not a danger — so it is a **score bonus, not a gate**.
 The system computes `bb_z` = how many standard deviations price sits below its 20-day mean; when
@@ -192,36 +202,50 @@ score = (Σ weightᵢ · bucketᵢ) / (Σ weightᵢ over available buckets)
 
 | Bucket | Weight* | Components | How each is scored |
 |---|---|---|---|
-| Option edge | `W_OPTION` | IV Rank, IV/HV, annualized return, theta decay | **Percentile-rank** across candidates (higher = better) |
+| Option edge | `W_OPTION` | **IV Rank + IV/HV** (premium *richness*) | **Percentile-rank** across candidates (higher = better) |
 | Technical | `W_TECHNICAL` | RSI sweet-spot, Bollinger %B, support cushion | RSI/BB are **direct 0–100**; support is percentile |
 | Diversification | `W_DIVERSIFY` | avg correlation to current holdings | **Absolute** 0–100 (not percentile) |
-| Fundamentals | `W_FUNDAMENTAL` | **Quality**: ROE + revenue growth + current ratio + low debt-to-equity | **Percentile-rank** (higher = better) |
+| Fundamentals | `W_FUNDAMENTAL` = **0** | *Gate only — no longer scored* (see below) | — |
 
 *Weights are tunable constants (config.json `weights`); the composite renormalizes so they need
-not sum to 1. Current default is 0.40 / 0.40 / 0.20 / 0.30 (option / technical / diversify /
+not sum to 1. Current default is 0.40 / 0.40 / 0.20 / **0.00** (option / technical / diversify /
 fundamental). Check `config.json` for live values.
 
-**Fundamentals components (decision — quality, not cheapness).** The fundamentals **gates** are a
-pass/fail *floor* (FCF>0, ROE≥8%, growth≥0, fwd P/E≤60). On top of that, a **fundamentals bucket**
-*ranks the survivors* by **business quality**: percentile-rank of **ROE**, **revenue growth**,
-**current ratio** (all higher = better) and **debt-to-equity** (lower = better), averaged.
+**Fundamentals are a GATE, not a score (revised after backtesting — 2026-06-28).** The fundamentals
+**gates** remain a pass/fail *floor* (FCF>0, ROE≥8%, growth≥0, fwd P/E≤60) — sensible distress /
+post-assignment protection. But the 30%-weight **quality bucket** (ROE + revenue growth + current
+ratio + low debt-to-equity) was **set to weight 0** after a 16-year backtest (`code/backtest.py`)
+showed it was *not* doing its job:
 
-We first tried scoring **FCF yield** (per Goldman's *Art of Put Selling*, where high-FCF-yield names
-beat the index in a diversified basket). It was **removed** because, for single-name selection, FCF
-yield = FCF ÷ market cap *mechanically rises as price falls*, so it tilts toward beaten-down
-**value traps** (e.g. LULU in a downtrend) — rewarding cheapness rather than health. The quality
-composite rewards genuinely strong companies you'd be content to own if assigned. ETFs have no
-fundamentals → the bucket is skipped and the composite renormalizes. (FCF yield as a *strike-target*
-method — sell premium = N× FCF yield — was discussed but not built.)
+- On the metric that matters for put selling — **assignment rate** — quality quintiles were **flat**
+  (~15–16%, no gradient), and breaches were *deeper* at the high-quality end, **even in a test biased
+  in quality's favour** (static current fundamentals → lookahead + survivorship).
+- The reason: our "quality" (ROE + growth) quietly selects **high-multiple, high-beta growth** names.
+  Their premium yield (a vol gauge) **roughly doubled** across the quintiles — so the bucket was a
+  **disguised high-volatility tilt**, and its earlier monotone *return* gradient was just
+  premium-for-vol, not safety.
+- This matches the broader evidence that **chasing premium / high-vol underlyings underperforms** for
+  option selling, and lower-vol names give better risk-adjusted outcomes.
 
-**Option-edge components**
+Earlier history: FCF-yield scoring (per Goldman's *Art of Put Selling*) was tried first and removed as
+a value-trap tilt (FCF÷mktcap rises as price falls); it was replaced by the quality composite, which
+has now itself been retired to gate-only. A **low-volatility / stability** factor is the next
+candidate to *test* (not yet weighted) — its clean, model-independent signal in the backtest is
+**shallower losses-when-breached**. ETFs have no fundamentals and bypass the gate.
+
+**Option-edge components — premium *richness*, not raw premium size (revised 2026-06-28).**
+The bucket scores how rich the premium is *relative to risk*, not how big it is:
 - **IV Rank** — per *ticker* (underlying-level), from the preferred IV source (§4). Same value
   for all of that ticker's options. Needs ≥20 stored points or it's blank (NaN) and simply
   drops out of the bucket.
 - **IV/HV** — option's implied vol ÷ realized vol (IBKR HV preferred). >1 = rich.
-- **Annualized return on collateral** — `(premium / strike) / DTE × 365 × 100` (%). Compares
-  yield across strikes/expiries on equal footing.
-- **Theta decay** — |theta| (income velocity).
+
+**`ann_ret` and `theta` were removed from the score** (they remain *display* columns). Both measure
+raw premium size, which is essentially a volatility proxy — and real IBKR IV data (1yr, 157 names)
+shows the variance risk premium **falls** with vol: IV/HV ≈ **1.26 at low vol → 0.93 at high vol**
+(forward 1.13 → 0.98). So rewarding raw premium tilts the score toward high-vol names whose premium is
+*negative-edge* (you're underpaid for the tail). Ranking on richness (IV Rank + IV/HV) captures the
+real edge and leans, correctly, toward calmer names. Tested via `code/backtest.py --real-iv`.
 
 **Technical components**
 - **RSI(14) score** — direct 0–100, peaks at ~40 (the 30–50 "fear but not collapse" zone),
@@ -444,9 +468,15 @@ scheduled jobs just connect to the already-running Gateway. (Fuller automation =
 | 15 | Earnings dates | Surfaced as an `earnings` column (screener + monitor), shown as **M/D** in console and Telegram. |
 | 16 | CSV to phone | `daily_report` also **attaches the full CSVs** to Telegram (`sendDocument`) so detail is openable on the phone without screen-width limits. |
 | 17 | Universe | Expanded S&P 100 → + Dow & Nasdaq-100 names (liquid, optioned); ~149 equities + 9 ETFs. |
-| 18 | Fundamentals scored | Added a **4th bucket — business quality** (ROE + rev growth + current ratio + low debt, weight 0.30) ranking gate-survivors. FCF-yield scoring was tried (Goldman) then **removed**: as FCF÷mktcap it rises as price falls, tilting toward value traps (single-name vs basket). |
+| 18 | Fundamentals scored | Added a **4th bucket — business quality** (ROE + rev growth + current ratio + low debt, weight 0.30) ranking gate-survivors. FCF-yield scoring was tried (Goldman) then **removed**: as FCF÷mktcap it rises as price falls, tilting toward value traps (single-name vs basket). *(Later retired to gate-only — see row 22.)* |
 | 19 | Live-quote gate | `require_quote` (default on): a contract needs a real **bid & ask** — no-bid puts aren't sellable and their IV would come from a stale last price. |
 | 20 | Dividend watchlist | Ungated `dividends.csv` — top dividend *stocks* by yield, captured before the gates (high yielders surface even when not tradable). Fixed a 100× yield bug. |
+| 21 | Backtest harness | Built `code/backtest.py` — monthly **hold-to-expiry** CSP sim, ~0.20Δ 1-mo puts, **premiums simulated** via Black-Scholes at IV=HV×1.15 (no free option-price history), mid fills. Reuses the screener's own pricing/technical/scoring. Compares ScoreTopN vs EqualWeight vs QQQ/SPY + assignment/loss-by-quintile. **Trust relative gaps, not absolute CAGR**; option-edge bucket can't be tested (IV is modeled). |
+| 22 | Fundamentals → **gate only (weight 0)** | Backtest (16 yrs, 27k trades) showed the quality bucket was a **disguised high-vol tilt**: flat assignment across quality quintiles, *deeper* breaches at the top, premium-yield ~2× — even in a test biased *toward* quality. Set `W_FUNDAMENTAL` 0.30→**0** (gate stays). The **technical** bucket, by contrast, validated as a real **assignment-avoidance filter** (assignment 16.7%→13.7%, premium-flat). Next to test: a **low-vol/stability** factor (clean signal: shallower losses-when-breached). |
+| 23 | Real-IV VRP finding | Real IBKR IV (1yr, 157 names, 39k ticker-days): **IV/HV falls with vol — 1.26 (low) → 0.93 (high)**. Low-vol pays a richer risk-adjusted premium; high-vol is *underpaid* (negative VRP). Confirms premium-chasing is a trap and that the flat HV×1.15 sim assumption was the artifact behind earlier "high-vol wins." Backtest gained `--real-iv` + `--vrp calibrated` (IV/HV ≈ 1.40 − 0.87·HV). |
+| 24 | Option-edge = **richness** | Dropped `ann_ret` + `theta` from the option-edge score (raw premium = vol proxy → the trap). Rank on **IV Rank + IV/HV** only (premium per unit risk). Kept as display columns. |
+| 25 | Slow-downtrend **flag, not gate** | Names below a *falling* 200-MA assign more / breach deeper (backtest), but are often intentional dip entries → emit a **`<200MA`** `*` flag across outputs and keep them. Hard gate opt-in via `regime.block_below_falling_ma` (default false). |
+| 26 | Best-ticker-first ordering | Top-N grouped views (console, Telegram, Excel) order groups by each ticker's **highest score (desc)**, then by score within (was alphabetical). |
 
 ## 11. Field glossary (output columns)
 
@@ -457,6 +487,7 @@ scheduled jobs just connect to the already-running Gateway. (Fuller automation =
 | `ticker`, `type` | Underlying; `P` = put |
 | `stock_price` | Underlying spot |
 | `otm_%` | Downside cushion to strike = `(price−strike)/price×100` (positive = OTM) |
+| `<200MA` | `*` = price below a *falling* 200-MA (slow-downtrend flag; not filtered, just marked) |
 | `expiry`, `dte` | Expiration date; days to expiry |
 | `earnings` | Next earnings date (shown as M/D in displays); blank for ETFs |
 | `strike`, `mid` | Strike; option mid price |
@@ -543,11 +574,12 @@ to the code default. After editing: `git add config.json && git commit && git pu
 | `ALLOW_MISSING_OI` | True | Let 0/NaN OI through (weekends) |
 | `REQUIRE_QUOTE` | True | Require a live bid & ask (no stale-last IV; sellable) |
 | `REGIME_MODE` | `'breakdown'` | Regime gate mode (`breakdown`/`gate`/`off`) |
+| `regime.block_below_falling_ma` | `false` | Slow-downtrend: `false`=flag only (`<200MA` col), `true`=hard gate |
 | `DROP_WINDOW`/`DROP_PCT` | 10 / 0.15 | Steep-drop test: peak→now fall over N days |
 | `VOL_FAST`/`VOL_SLOW`/`VOL_RATIO`/`VOL_ABS` | 10 / 63 / 1.8 / 0.50 | Vol-spike test (fast vs baseline realized vol) |
 | `REQUIRE_SOLVENCY`/`REQUIRE_FUNDAMENTALS` | True | Quality gates |
 | `MIN_ROE`/`MIN_REV_GROWTH`/`MAX_FORWARD_PE` | 0.08 / 0.0 / 60 | Fundamental thresholds |
-| `W_OPTION`/`W_TECHNICAL`/`W_DIVERSIFY`/`W_FUNDAMENTAL` | 0.40/0.40/0.20/0.30 | Composite weights (4 buckets) |
+| `W_OPTION`/`W_TECHNICAL`/`W_DIVERSIFY`/`W_FUNDAMENTAL` | 0.40/0.40/0.20/**0.00** | Composite weights (fundamental retired to gate-only) |
 | `CORR_LOOKBACK_DAYS` | 126 | Correlation window |
 | `ACCOUNT_SIZE` | 700000 (fallback) | Overridden by `account.json` |
 | `MAX_RISK_PCT`/`ASSUMED_DRAWDOWN` | 0.03 / 0.15 | Sizing risk model |
