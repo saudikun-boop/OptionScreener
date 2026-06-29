@@ -177,6 +177,10 @@ MIN_REV_GROWTH = _c('gates', 'min_rev_growth', MIN_REV_GROWTH)
 MAX_FORWARD_PE = _c('gates', 'max_forward_pe', MAX_FORWARD_PE)
 REGIME_MODE = _c('regime', 'mode', REGIME_MODE)
 DOWNTREND_SLOPE = _c('regime', 'downtrend_slope', DOWNTREND_SLOPE)
+# Slow-downtrend gate: also skip names trading below a FALLING 200-MA (the grind the
+# sharp-breakdown test misses). Backtest: such names assign more + breach deeper. Tail
+# insurance — rarely binds in bull markets, protects in corrections. Toggle in config.
+BLOCK_BELOW_FALLING_MA = _c('regime', 'block_below_falling_ma', True)
 NEW_LOW_TOL = _c('regime', 'new_low_tol', 0.02)         # (legacy) within this % of the 6-mo low
 # Breakdown gate — skip ACTIVE sharp breakdowns (steep drop OR a volatility spike),
 # regardless of absolute price level. Tunable in config.json -> "regime".
@@ -371,6 +375,11 @@ def regime_block(price, tech):
     if hv_fast is not None and vr is not None and vr >= VOL_RATIO and hv_fast >= VOL_ABS:
         return True, (f"vol spike: {VOL_FAST}d HV {hv_fast*100:.0f}% = {vr:.1f}x "
                       f"{VOL_SLOW}d baseline")
+    if BLOCK_BELOW_FALLING_MA:                       # slow grind the sharp tests miss
+        ma200, slope = tech.get('ma200'), tech.get('ma200_slope')
+        if ma200 is not None and slope is not None and price < ma200 and slope < 0:
+            return True, (f"slow downtrend: ${price:.2f} < falling 200-MA ${ma200:.2f} "
+                          f"(slope {slope*100:+.1f}%/mo)")
     return False, ''
 
 

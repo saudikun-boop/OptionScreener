@@ -8,7 +8,8 @@
                 "min_roe": 0.08, "min_rev_growth": 0.0, "max_forward_pe": 60 },
 
   "regime":   { "mode": "breakdown", "drop_window": 10, "drop_pct": 0.15,
-                "vol_fast": 10, "vol_slow": 63, "vol_ratio": 1.8, "vol_abs": 0.50 },
+                "vol_fast": 10, "vol_slow": 63, "vol_ratio": 1.8, "vol_abs": 0.50,
+                "block_below_falling_ma": true },
 
   "oversold": { "z_threshold": -2.5, "bonus": 8.0 },
 
