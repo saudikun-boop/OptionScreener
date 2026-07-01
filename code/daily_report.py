@@ -295,9 +295,10 @@ def build_workbook():
     except Exception as e:
         print("Workbook: openpyxl not importable —", e)
         return None
-    # Dated filename so an .xlsx left open on a device can't lock today's write.
-    out = _path(f"daily_report_{date.today()}.xlsx")
-    # Don't accumulate: remove previous report files (keep only this run's).
+    # Static filename (per request). Note: if it's open in Excel when the report runs,
+    # the write can be locked → the build fails and it falls back to CSV (close it first).
+    out = _path("daily_report.xlsx")
+    # Clean up any old dated files from previous runs (daily_report_YYYY-MM-DD.xlsx).
     for old in glob.glob(_path('daily_report_*.xlsx')) + [_path('daily_report.csv')]:
         if os.path.abspath(old) != os.path.abspath(out) and os.path.exists(old):
             try:
